@@ -90,3 +90,6 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-24 · Decision bug found in tuning: rest trap.** Low health raised the "rest" score, so starving agents rested and starved faster. Illness and injury now pull toward rest in proportion to (1 − hunger).
 
 - **2026-09-24 · Utility terms are commensurate.** Expected success for Forage and Hunt is the expected *net* food of the trip (yield minus its energy cost) relative to daily need. A small explicit effort term remains, per the spec formula.
+
+- **2026-09-24 · M1 calibration closes with 4/5 targets.** The interbirth interval (4.05 years) is marginally above target, for the trade-off documented in CALIBRATION.md. Per §17 I did not force it by scripting outcomes. Demography is recalibrated after M2/M3, which change food flow and mortality.
+- **2026-09-24 · Calibration pools modal age and interbirth interval across seeds.** A per-seed mode is fragile (bimodal famine seeds), and the pooled statistic is what a demographer would compute from the combined sample. Per-seed values stay in the report.
