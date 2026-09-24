@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terrarium · debug view</title>
+    <style>
+      :root { color-scheme: dark; --bg: #14161a; --panel: #1e2127; --fg: #e6e2d8; --muted: #8d8a82; --accent: #d8a657; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; height: 100vh; }
+      #stage { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
+      canvas { image-rendering: pixelated; max-width: 100%; max-height: 100%; cursor: crosshair; }
+      aside { width: 280px; background: var(--panel); padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+      h1 { font-size: 14px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+      .row { display: flex; gap: 6px; flex-wrap: wrap; }
+      button, input { background: #2a2e36; color: var(--fg); border: 1px solid #3a3f49; border-radius: 4px; padding: 4px 8px; font: inherit; }
+      button.active { border-color: var(--accent); color: var(--accent); }
+      input { width: 70px; }
+      .muted { color: var(--muted); }
+      #clans div { display: flex; align-items: center; gap: 6px; }
+      .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+      pre { margin: 0; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"><canvas id="view"></canvas></div>
+    <aside>
+      <h1>Terrarium · M0</h1>
+      <div class="row">
+        <label>seed <input id="seed" type="number" value="1" /></label>
+        <button id="restart">restart</button>
+      </div>
+      <div class="row" id="speeds"></div>
+      <pre id="hud"></pre>
+      <div id="clans"></div>
+      <pre id="inspect" class="muted">click an agent to inspect</pre>
+    </aside>
+    <script type="module" src="/src/debug/main.ts"></script>
+  </body>
+</html>

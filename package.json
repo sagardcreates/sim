@@ -1,0 +1,25 @@
+{
+  "name": "terrarium",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "sim": "tsx src/cli/run.ts",
+    "batch": "tsx src/cli/batch.ts",
+    "calibrate": "tsx src/cli/calibrate.ts",
+    "lint": "eslint src tests",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sim.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "eslint": "^10.11.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1"
+  }
+}

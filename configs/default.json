@@ -1,0 +1,46 @@
+{
+  "configVersion": 1,
+  "time": {
+    "daysPerYear": 365,
+    "subStepsPerDay": 8
+  },
+  "world": {
+    "width": 96,
+    "height": 96,
+    "elevationScale": 22,
+    "elevationOctaves": 4,
+    "moistureScale": 18,
+    "moistureOctaves": 3,
+    "riverCount": 3,
+    "riverMinSourceElevation": 0.62,
+    "lakeLevel": 0.3,
+    "hillLevel": 0.7,
+    "forestMoisture": 0.58,
+    "scrubMoisture": 0.36,
+    "biomes": {
+      "grassland": { "movementCost": 1.0, "plantCapacity": 1.0, "regrowthRate": 0.02, "gameDensity": 0.6 },
+      "forest":    { "movementCost": 1.6, "plantCapacity": 1.3, "regrowthRate": 0.015, "gameDensity": 1.0 },
+      "hills":     { "movementCost": 2.2, "plantCapacity": 0.5, "regrowthRate": 0.01, "gameDensity": 0.5 },
+      "scrub":     { "movementCost": 1.2, "plantCapacity": 0.35, "regrowthRate": 0.008, "gameDensity": 0.3 },
+      "water":     { "movementCost": 99.0, "plantCapacity": 0.0, "regrowthRate": 0.0, "gameDensity": 0.0 }
+    },
+    "waterAccessRadius": 3
+  },
+  "init": {
+    "clanCount": 4,
+    "agentsPerClan": 50,
+    "campMinSeparation": 28,
+    "campMaxWaterDistance": 2,
+    "agePyramidDecay": 0.035,
+    "maxInitialAge": 70,
+    "startSpreadRadius": 3
+  },
+  "movement": {
+    "wanderStepTiles": 0.6,
+    "homeRadius": 8,
+    "homePull": 0.25
+  },
+  "history": {
+    "microBufferSize": 20000
+  }
+}

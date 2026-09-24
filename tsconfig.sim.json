@@ -1,0 +1,9 @@
+{
+  "//": "Sim core purity check: no DOM, no Node types. Any DOM/Node global used in src/sim fails to typecheck.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src/sim"]
+}
