@@ -19,12 +19,20 @@ export type EventType =
   | 'climate.drought_began'
   | 'climate.drought_ended'
   | 'epidemic.outbreak'
-  | 'epidemic.ended';
+  | 'epidemic.ended'
+  | 'agent.left_clan'
+  | 'agent.joined_clan'
+  | 'agent.rejected'
+  | 'agent.expelled'
+  | 'clan.fission'
+  | 'food.freeriding'
+  | 'hunt.party_kill';
 
 /** Event types retained permanently. Everything else is micro (rolling buffer + yearly counts). */
 export const MACRO_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'sim.start', 'year.end', 'clan.founded', 'clan.dissolved', 'clan.camp_moved', 'agent.born', 'agent.died',
   'pair.formed', 'climate.drought_began', 'climate.drought_ended', 'epidemic.outbreak', 'epidemic.ended',
+  'agent.left_clan', 'agent.joined_clan', 'agent.expelled', 'clan.fission',
 ]);
 
 export interface SimEvent {

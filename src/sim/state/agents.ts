@@ -111,6 +111,11 @@ export const AGENT_SCHEMA = {
   pairEventId: 'i32',
   /** Event id of the injury currently affecting this agent. */
   injuryEventId: 'i32',
+  /** EMA of food given to others / the store, and taken from the store (units/day). */
+  givenEma: 'f64',
+  takenEma: 'f64',
+  /** Hunting party leader this agent joined today (-1 = none / is a leader). */
+  partyLeader: 'i32',
   /** Home tile for today (set at decision time; derived from clan camp / own home). */
   homeTileToday: 'i32',
   /** Index into the MindStore pool while alive; -1 when dead. */
@@ -180,6 +185,7 @@ export class AgentStore {
     c.targetTile[id] = NO_ID;
     c.slot[id] = NO_ID;
     c.pairEventId[id] = NO_ID;
+    c.partyLeader[id] = NO_ID;
     c.injuryEventId[id] = NO_ID;
     c.healthCap[id] = 1;
     c.alive[id] = 1;
@@ -208,7 +214,8 @@ export const GOAL_HUNT = 2;
 export const GOAL_CARE = 3;
 export const GOAL_FOLLOW = 4;
 export const GOAL_CARRIED = 5;
-export const GOAL_NAMES = ['rest', 'forage', 'hunt', 'care for children', 'follow caregiver', 'carried'];
+export const GOAL_SOCIALIZE = 6;
+export const GOAL_NAMES = ['rest', 'forage', 'hunt', 'care for children', 'follow caregiver', 'carried', 'socialize'];
 
 /** Movement phase within a day. */
 export const PHASE_HOME = 0;

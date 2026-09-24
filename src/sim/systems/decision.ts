@@ -9,9 +9,10 @@
  */
 import type { Simulation } from '../sim';
 import {
-  GOAL_CARE, GOAL_CARRIED, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, GOAL_REST, NO_ID,
+  GOAL_CARE, GOAL_CARRIED, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, GOAL_REST, GOAL_SOCIALIZE, NO_ID,
   PHASE_HOME, PHASE_OUT, PHASE_RETURN, REP_LACTATING, REP_PREGNANT,
 } from '../state/agents';
+import { feltAffinity } from './social';
 import { FlowFields } from '../world/flowfield';
 import { ageYears, homeTile, isAlive, placeAtHome, tileOf } from './common';
 
@@ -21,10 +22,12 @@ export const WHY_LABELS = [
   'risk of injury', 'unwell', 'injured', 'pregnant', 'young children at camp', 'well fed',
   'bold', 'sticking with plan', 'effort of the trip', 'learning from a caregiver', 'exploring',
   'carrying an infant', 'too young to forage', 'nursing', 'cautious',
+  'sociable', 'looking for a partner', 'joining a hunting party', 'hunting together pays more',
 ];
 const T_HUNGRY = 1, T_DEPS = 2, T_SPOT = 3, T_HUNTREC = 4, T_RISK = 5, T_UNWELL = 6, T_INJURED = 7,
   T_PREG = 8, T_KIDS = 9, T_FED = 10, T_BOLD = 11, T_PLAN = 12, T_EFFORT = 13, T_LEARN = 14, T_EXPLORE = 15,
-  T_INFANT = 16, T_YOUNG = 17, T_NURSING = 18, T_CAUTIOUS = 19;
+  T_INFANT = 16, T_YOUNG = 17, T_NURSING = 18, T_CAUTIOUS = 19, T_SOCIABLE = 20, T_COURT = 21, T_PARTY = 22,
+  T_SYNERGY = 23;
 
 /** Scratch buffers for scoring (no per-decision allocation). */
 const MAX_OPT = 8;
@@ -67,6 +70,7 @@ export function decisionSystem(sim: Simulation): void {
   for (const id of order) {
     c.homeTileToday[id] = homeTile(sim, id);
     c.followId[id] = NO_ID;
+    c.partyLeader[id] = NO_ID;
     c.todayYield[id] = 0;
     c.moveBudget[id] = 0;
     const age = ageYears(sim, id);
@@ -88,6 +92,7 @@ export function decisionSystem(sim: Simulation): void {
     decideAdult(sim, id, rng);
   }
 
+  formParties(sim, adults, rng);
   // Older children see who is setting out and tag along with a caregiver.
   for (const id of followers) decideFollower(sim, id, rng);
   // Infants go wherever their mother goes.
@@ -97,7 +102,6 @@ export function decisionSystem(sim: Simulation): void {
     if (isAlive(sim, m) && c.goal[m] !== GOAL_REST && c.goal[m] !== GOAL_CARE && c.phase[m] !== PHASE_HOME) c.followId[id] = m;
     else c.followId[id] = NO_ID;
   }
-  void adults;
 }
 
 function setHome(sim: Simulation, id: number): void {
@@ -170,6 +174,7 @@ function decideAdult(sim: Simulation, id: number, rng: import('../rng').Rng): vo
   const bold = c.boldness[id];
   const carrying = deps.infant; // a nursing mother carries her infant when she leaves camp
   nOpt = 0;
+  const sc = sim.cfg.social;
   const need1 = sim.cfg.metabolism.adultNeed;
   const effortWeight = dc.effortWeight;
   // --- Forage (plants) ---
@@ -224,6 +229,12 @@ function decideAdult(sim: Simulation, id: number, rng: import('../rng').Rng): vo
     term(T_KIDS, (dc.careBase + dc.careChildWeight * deps.youngKids) * (1 - h));
     term(T_NURSING, c.repState[id] === REP_LACTATING ? 0.05 : 0);
   }
+
+  // --- Socialize (stay at camp and spend time with people) ---
+  const single = c.partnerId[id] === NO_ID && ageYears(sim, id) >= sim.cfg.life.pairMinAgeYears;
+  beginOption(GOAL_SOCIALIZE, NO_ID);
+  term(T_SOCIABLE, (sc.socializeBase + sc.socializeSociability * c.sociability[id]) * (1 - h));
+  term(T_COURT, single ? sc.courtWeight * (1 - h) : 0);
 
   // Hysteresis: stick with yesterday's plan unless in an emergency.
   if (e > dc.emergencyEnergy) {
@@ -417,4 +428,52 @@ function decideFollower(sim: Simulation, id: number, rng: import('../rng').Rng):
   c.followId[id] = cands[k];
   c.phase[id] = PHASE_OUT;
   sim.mind.setWhy(c.slot[id], GOAL_FOLLOW, [T_LEARN, T_HUNGRY], [vals[k], hungerV]);
+}
+
+/**
+ * Hunting parties (§3, §5 "Hunt: solo or join group"). Hunters see who else is
+ * heading out to hunt this morning and may join a clanmate's party when the
+ * expected share (group success with synergy, bigger game, split n ways) plus
+ * their liking of the leader beats hunting alone. Joiners walk with the leader.
+ */
+function formParties(sim: Simulation, adults: number[], rng: import('../rng').Rng): void {
+  const c = sim.agents.cols;
+  const hc = sim.cfg.hunting;
+  const rc = sim.cfg.resources;
+  sim.parties.clear();
+  const leaders: number[] = [];
+  for (const id of adults) {
+    if (c.goal[id] !== GOAL_HUNT || c.phase[id] !== PHASE_OUT) continue;
+    const pSolo = Math.max(0.02, c.huntSuccessEma[id]);
+    const opts: number[] = [];
+    const vals: number[] = [];
+    // Option 0: go alone (and become a potential leader).
+    opts.push(NO_ID);
+    vals.push(pSolo * rc.huntYieldMean);
+    for (const L of leaders) {
+      if (c.clanId[L] !== c.clanId[id]) continue;
+      const party = sim.parties.get(L)!;
+      const n = party.length + 2;
+      if (n > hc.maxParty) continue;
+      let miss = 1 - Math.max(0.02, c.huntSuccessEma[L]) * (1 + hc.groupSynergy * (n - 1));
+      for (const m of party) miss *= 1 - Math.max(0.02, c.huntSuccessEma[m]) * (1 + hc.groupSynergy * (n - 1));
+      miss *= 1 - pSolo * (1 + hc.groupSynergy * (n - 1));
+      const pGroup = 1 - Math.max(0, miss);
+      const share = (pGroup * rc.huntYieldMean * (1 + hc.bigGamePerMember * (n - 1))) / n;
+      opts.push(L);
+      vals.push(share + hc.joinAffinityWeight * feltAffinity(sim, id, L));
+    }
+    const k = rng.softmax(vals, hc.joinTemperature);
+    const L = opts[k];
+    if (L === NO_ID) {
+      leaders.push(id);
+      sim.parties.set(id, []);
+      continue;
+    }
+    sim.parties.get(L)!.push(id);
+    c.partyLeader[id] = L;
+    c.followId[id] = L;
+    c.targetTile[id] = c.targetTile[L];
+    sim.mind.setWhy(c.slot[id], GOAL_HUNT, [T_PARTY, T_SYNERGY], [vals[k], vals[k] - vals[0]]);
+  }
 }

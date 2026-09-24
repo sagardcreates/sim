@@ -94,7 +94,7 @@ export function campSystem(sim: Simulation): void {
 }
 
 /** Nearest land tile within 3 tiles of `t` that is close to water. */
-function nearestCampSite(sim: Simulation, t: number): number {
+export function nearestCampSite(sim: Simulation, t: number): number {
   const w = sim.world;
   const W = w.width;
   const x0 = t % W;

@@ -9,7 +9,7 @@
 import type { Simulation } from '../sim';
 import {
   CAUSE_AGING, CAUSE_EPIDEMIC, CAUSE_INFANT, CAUSE_INJURY, CAUSE_NAMES, CAUSE_NEGLECT, CAUSE_STARVATION,
-  GOAL_CARE, GOAL_REST, NO_ID, PHASE_HOME,
+  GOAL_CARE, GOAL_REST, GOAL_SOCIALIZE, NO_ID, PHASE_HOME,
 } from '../state/agents';
 import { ageYears, isAlive } from './common';
 
@@ -67,7 +67,7 @@ function attendedClans(sim: Simulation): Set<number> {
   const out = new Set<number>();
   for (const [clan, members] of sim.clanMembers) {
     for (const id of members) {
-      if ((c.goal[id] === GOAL_REST || c.goal[id] === GOAL_CARE) && c.phase[id] === PHASE_HOME
+      if ((c.goal[id] === GOAL_REST || c.goal[id] === GOAL_CARE || c.goal[id] === GOAL_SOCIALIZE) && c.phase[id] === PHASE_HOME
         && ageYears(sim, id) >= sim.cfg.life.independentAgeYears) {
         out.add(clan);
         break;

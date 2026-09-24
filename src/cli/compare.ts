@@ -8,6 +8,7 @@ import { makeConfig } from '../sim/config';
 import { parseArgs, parseSeeds } from './args';
 import type { RunJob } from './jobs';
 import { runPool } from './pool';
+import { mergeDeep } from './merge';
 
 const args = parseArgs(process.argv.slice(2));
 const seeds = parseSeeds(typeof args.seeds === 'string' ? args.seeds : '1..4');
@@ -15,12 +16,6 @@ const years = Number(args.years ?? 200);
 const base = JSON.parse(readFileSync(typeof args.config === 'string' ? args.config : 'configs/default.json', 'utf8'));
 const variants: Record<string, unknown> = typeof args.variants === 'string' ? JSON.parse(args.variants) : { base: {} };
 
-export function mergeDeep(a: unknown, b: unknown): unknown {
-  if (typeof b !== 'object' || b === null || Array.isArray(b)) return b === undefined ? a : b;
-  const o: Record<string, unknown> = { ...(a as Record<string, unknown>) };
-  for (const [k, v] of Object.entries(b)) o[k] = mergeDeep(o[k], v);
-  return o;
-}
 
 const jobs: RunJob[] = [];
 for (const [label, v] of Object.entries(variants)) {

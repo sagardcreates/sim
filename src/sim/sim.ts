@@ -13,6 +13,10 @@ import { AGENT_FIELDS, AgentStore, NO_ID } from './state/agents';
 import { ClanRegistry, type Clan } from './state/clans';
 import { MindStore, type MindSnapshot } from './state/mind';
 import { KinIndex, Pedigree } from './state/pedigree';
+import { RelationStore, type RelationSnapshot } from './state/relations';
+import { clanMembershipSystem, yearlyClanSystem } from './systems/clans';
+import { fieldEncounters, nightSocialSystem } from './systems/social';
+import { homeTile } from './systems/common';
 import { campSystem } from './systems/camps';
 import { climateSystem, initialClimate, type ClimateState } from './systems/climate';
 import { decisionSystem } from './systems/decision';
@@ -29,7 +33,7 @@ import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm1.0';
+export const CODE_VERSION = 'm2.0';
 
 export interface Grave {
   id: number;
@@ -44,6 +48,8 @@ export class Simulation {
   world: World;
   agents = new AgentStore();
   mind: MindStore;
+  /** Relationship maps (per living agent). */
+  rel: RelationStore;
   pedigree: Pedigree;
   /** Known kin (derived from the pedigree). */
   kin: KinIndex;
@@ -58,6 +64,10 @@ export class Simulation {
   spatial: SpatialHash;
   /** clanId -> living member ids (ascending), rebuilt each day. */
   clanMembers = new Map<number, number[]>();
+  /** Today's hunting parties: leader -> joined members (derived daily). */
+  parties = new Map<number, number[]>();
+  /** Yearly derived clan-to-clan relation (mean member affinity), for historian/visuals. */
+  clanRelations = new Map<string, number>();
   /** Read-only hook fired after every movement sub-step (render interpolation). */
   onSubStep?: (sim: Simulation, subStep: number) => void;
 
@@ -67,6 +77,7 @@ export class Simulation {
     this.world = generateWorld(cfg, this.rng.get('terrain'));
     this.events = new EventLog(cfg.history.microBufferSize);
     this.mind = new MindStore(cfg.memory.placeCap, cfg.movement.maxPathLength);
+    this.rel = new RelationStore(cfg.relations.cap, cfg.relations.decay);
     this.pedigree = new Pedigree(this.agents);
     this.kin = new KinIndex(this.agents, this.pedigree);
     this.fields = new FlowFields(this.world, cfg.world.impassableCost, cfg.movement.fieldRadiusCost, cfg.movement.fieldCacheSize);
@@ -95,7 +106,9 @@ export class Simulation {
 
   /** Called for every new agent (founders and births). */
   onCreated(id: number): void {
-    this.agents.cols.slot[id] = this.mind.alloc();
+    const slot = this.mind.alloc();
+    this.agents.cols.slot[id] = slot;
+    this.rel.clearSlot(slot);
   }
 
   /** Called after an agent is marked dead. */
@@ -127,6 +140,35 @@ export class Simulation {
     return 1;
   }
 
+  /** How much agent i defers to clan k's leadership (M3). */
+  deferenceToLeadership(i: number, k: number): number {
+    void i;
+    void k;
+    return 0;
+  }
+
+  /** How highly y regards x: deference if any (M3), else affinity. */
+  regard(y: number, x: number): number {
+    const v = this.rel.get(this.agents.cols.slot[y], x, this.tick);
+    if (!v) return 0;
+    return v.def > 0 ? v.def : v.aff;
+  }
+
+  /** Top-n members of a clan by status; before deference exists, eldest adults stand in. */
+  topStatus(clanId: number, n: number): number[] {
+    const c = this.agents.cols;
+    const members = (this.clanMembers.get(clanId) ?? []).filter((id) => this.tick - c.birthTick[id] >= this.cfg.life.adultAgeYears * this.cfg.time.daysPerYear);
+    return members
+      .map((id) => ({ id, s: this.statusOf(id), age: this.tick - c.birthTick[id] }))
+      .sort((a, b) => b.s - a.s || b.age - a.age || a.id - b.id)
+      .slice(0, n)
+      .map((x) => x.id);
+  }
+
+  homeTileOf(id: number): number {
+    return homeTile(this, id);
+  }
+
   rebuildDerived(): void {
     this.clanMembers.clear();
     const c = this.agents.cols;
@@ -152,20 +194,52 @@ export class Simulation {
     for (let s = 0; s < this.cfg.time.subStepsPerDay; s++) {
       const order = this.shuffledLiving(orderRng);
       movementSubStep(this, order, s, moveRng);
-      // Encounters / interaction resolution: M2+.
+      fieldEncounters(this, this.rng.get('encounters'));
       this.onSubStep?.(this, s);
     }
     drinkAtNight(this);
     provisionSystem(this);
+    nightSocialSystem(this);
     reproductionSystem(this);
     epidemicSystem(this);
     this.rebuildDerived();
     mortalitySystem(this);
     this.rebuildDerived();
     campSystem(this);
+    clanMembershipSystem(this);
     this.checkDissolution();
     this.tick++;
-    if (this.dayOfYear === 0) this.closeYear();
+    if (this.dayOfYear === 0) {
+      this.rebuildDerived();
+      yearlyClanSystem(this);
+      this.rebuildDerived();
+      this.checkDissolution();
+      this.computeClanRelations();
+      this.closeYear();
+    }
+  }
+
+  /** Mean member-to-member affinity between clans (derived yearly; cached for historian/visuals). */
+  private computeClanRelations(): void {
+    this.clanRelations.clear();
+    const c = this.agents.cols;
+    const sums = new Map<string, [number, number]>();
+    for (const id of this.agents.living) {
+      const a = c.clanId[id];
+      if (a < 0) continue;
+      const w = this.influence(id);
+      this.rel.forEach(c.slot[id], this.tick, (o, v) => {
+        if (!c.alive[o]) return;
+        const b = c.clanId[o];
+        if (b < 0 || b === a) return;
+        const key = `${a}>${b}`;
+        const e = sums.get(key) ?? [0, 0];
+        e[0] += w * v.aff;
+        e[1] += w;
+        sums.set(key, e);
+      });
+    }
+    for (const [k, [s, n]] of [...sums.entries()].sort()) this.clanRelations.set(k, s / n);
   }
 
   private checkDissolution(): void {
@@ -188,9 +262,15 @@ export class Simulation {
       meanEnergy: this.agents.living.length ? Math.round((e / this.agents.living.length) * 1000) / 1000 : 0,
       drought: Math.round(this.climate.drought * 1000) / 1000,
       clans: this.clans.extant().map((cl) => ({ id: cl.id, size: this.clanMembers.get(cl.id)?.length ?? 0 })),
+      loners: this.clanMembers.get(-1)?.length ?? 0,
     });
     this.events.emit(this.tick, { type: 'year.end', causes: [], data: { year, population: this.agents.living.length } });
     this.events.closeYear(year);
+  }
+
+  /** Extra per-run metrics used by acceptance reports (grows with milestones). */
+  acceptanceMetrics(): Record<string, number> {
+    return {};
   }
 
   run(days: number): void {
@@ -206,6 +286,7 @@ export class Simulation {
     h.string(this.agents.names.join('|'));
     h.typed(Int32Array.from(this.agents.living));
     for (const a of this.mind.hashArrays()) h.typed(a);
+    for (const a of this.rel.hashArrays(this.mind.highWater)) h.typed(a);
     h.string(stableStringify([...this.clans.clans.values()]));
     h.typed(this.world.plantFood).typed(this.world.gameDensity);
     h.string(stableStringify(this.climate));
@@ -227,6 +308,7 @@ export class Simulation {
       tick: this.tick,
       agents: { count: this.agents.count, names: [...this.agents.names], living: [...this.agents.living], cols: agentCols },
       mind: this.mind.snapshot(),
+      rel: this.rel.snapshot(this.mind.highWater),
       clans: { nextId: this.clans.nextId, list: [...this.clans.clans.values()].map((c) => deepClone(c)) },
       syllables: [...this.syllables.entries()].map(([id, s]) => [id, [...s.syllables]]),
       world: { plantFood: Array.from(this.world.plantFood), gameDensity: Array.from(this.world.gameDensity) },
@@ -260,6 +342,7 @@ export class Simulation {
       cols[f].set(snap.agents.cols[f]);
     }
     sim.mind.restore(snap.mind);
+    sim.rel.restore(snap.rel, snap.mind.highWater);
     sim.pedigree.rebuild();
     sim.kin.rebuildAll();
     sim.clans.nextId = snap.clans.nextId;
@@ -288,6 +371,7 @@ export interface SimSnapshot {
   tick: number;
   agents: { count: number; names: string[]; living: number[]; cols: Record<string, number[]> };
   mind: MindSnapshot;
+  rel: RelationSnapshot;
   clans: { nextId: number; list: Clan[] };
   syllables: [number, string[]][];
   world: { plantFood: number[]; gameDensity: number[] };

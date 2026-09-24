@@ -12,6 +12,7 @@ import {
   CAUSE_HUNTING, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, NO_ID, PHASE_HOME, PHASE_OUT, PHASE_RETURN, PHASE_WORK,
 } from '../state/agents';
 import { FlowFields } from '../world/flowfield';
+import { contact } from './social';
 import {
   ageYears, feed, isAlive, placeAtHome, placeAtTile, sizeFactor, spend, strength, tileOf,
 } from './common';
@@ -32,13 +33,28 @@ export function movementSubStep(sim: Simulation, order: readonly number[], s: nu
     if (lead === NO_ID) continue;
     if (!isAlive(sim, lead)) {
       c.followId[id] = NO_ID;
+      c.partyLeader[id] = NO_ID;
       c.phase[id] = c.phase[id] === PHASE_HOME ? PHASE_HOME : PHASE_RETURN;
       continue;
     }
-    c.x[id] = c.x[lead] + 0.15;
-    c.y[id] = c.y[lead] + 0.1;
+    const wasHome = c.phase[id] === PHASE_HOME;
     c.phase[id] = c.phase[lead];
-    if (c.phase[lead] === PHASE_HOME && c.phase[id] !== PHASE_HOME) placeAtHome(sim, id);
+    if (c.phase[lead] === PHASE_HOME) {
+      if (!wasHome) placeAtHome(sim, id);
+    } else {
+      c.x[id] = c.x[lead] + 0.15;
+      c.y[id] = c.y[lead] + 0.1;
+    }
+    // Party hunters walk and work with their leader; the leader rolls for the group.
+    if (c.partyLeader[id] === lead) {
+      if (c.phase[lead] === PHASE_OUT || c.phase[lead] === PHASE_RETURN) spend(sim, id, sim.cfg.metabolism.walkCostPerStep);
+      if (c.phase[lead] === PHASE_WORK) {
+        spend(sim, id, sim.cfg.metabolism.workCostPerStep);
+        huntInjury(sim, id, rng);
+      }
+      eatOnTheGo(sim, id);
+      continue;
+    }
     // Mothers pay to carry infants; learning children work alongside.
     if (c.goal[id] === GOAL_FOLLOW) {
       if (c.phase[lead] === PHASE_WORK && c.goal[lead] === GOAL_FORAGE) forageAt(sim, id, tileOf(sim, lead), rng, true);
@@ -161,32 +177,55 @@ function hunt(sim: Simulation, id: number, t: number, rng: Rng): void {
   const c = sim.agents.cols;
   const w = sim.world;
   const rc = sim.cfg.resources;
-  const carrying = carryingInfant(sim, id);
-  const str = strength(sim, id);
-  const p = rc.huntSuccessPerStep * w.gameDensity[t] * (0.5 + str) * (0.6 + 0.8 * c.foragingSkill[id])
-    * (carrying ? rc.huntCarryingInfantFactor : 1);
-  if (rng.chance(p)) {
-    const yieldUnits = Math.max(1, rng.normal(rc.huntYieldMean, rc.huntYieldSd));
-    const room = rc.carryCapacity - c.carriedFood[id];
-    const got = Math.min(room, yieldUnits);
-    c.carriedFood[id] += got;
-    c.todayYield[id] += got;
-    w.gameDensity[t] *= 1 - rc.huntDepletion;
+  const hc = sim.cfg.hunting;
+  const party = sim.parties.get(id) ?? [];
+  const members = [id, ...party.filter((m) => c.alive[m] && c.partyLeader[m] === id)];
+  const n = members.length;
+  // Each hunter contributes; groups coordinate (synergy) and can take bigger game.
+  let miss = 1;
+  for (const m of members) {
+    const carrying = carryingInfant(sim, m);
+    const p = rc.huntSuccessPerStep * w.gameDensity[t] * (0.5 + strength(sim, m)) * (0.6 + 0.8 * c.foragingSkill[m])
+      * (carrying ? rc.huntCarryingInfantFactor : 1) * (1 + hc.groupSynergy * (n - 1));
+    miss *= 1 - Math.min(0.95, p);
+  }
+  if (rng.chance(1 - miss)) {
+    const total = Math.max(1, rng.normal(rc.huntYieldMean, rc.huntYieldSd)) * (1 + hc.bigGamePerMember * (n - 1));
+    const each = total / n;
+    for (const m of members) {
+      const got = Math.min(rc.carryCapacity - c.carriedFood[m], each);
+      c.carriedFood[m] += got;
+      c.todayYield[m] += got;
+      c.huntSuccessEma[m] += sim.cfg.decision.yieldEmaRate * (1 - c.huntSuccessEma[m]);
+    }
+    w.gameDensity[t] *= 1 - rc.huntDepletion * Math.min(2, 1 + 0.25 * (n - 1));
     c.phase[id] = PHASE_RETURN;
-    c.huntSuccessEma[id] += sim.cfg.decision.yieldEmaRate * (1 - c.huntSuccessEma[id]);
     sim.stats.day.kills++;
+    if (n > 1) {
+      sim.stats.day.partyHunts++;
+      // Shared success bonds the party.
+      for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) contact(sim, members[a], members[b], sim.cfg.social.socializeAffinity, sim.cfg.social.socializeFamiliarity);
+      sim.events.emit(sim.tick, { type: 'hunt.party_kill', causes: [], agents: members, clans: [c.clanId[id]], x: c.x[id], y: c.y[id], data: { units: Math.round(total) } });
+    }
   }
   c.foragingSkill[id] = Math.min(1, c.foragingSkill[id] + sim.cfg.skills.practiceRate * 0.5 * (1 - c.foragingSkill[id]));
-  if (rng.chance(rc.huntInjuryPerStep * (1.5 - Math.min(1, str)) * (carrying ? 3 : 1))) {
-    const sev = rc.huntInjurySeverity * (0.5 + rng.next());
-    c.injury[id] = Math.min(1, c.injury[id] + sev);
-    c.injuryCause[id] = CAUSE_HUNTING;
-    c.injuryEventId[id] = sim.events.emit(sim.tick, {
-      type: 'agent.injured', causes: [], x: c.x[id], y: c.y[id], agents: [id], clans: [c.clanId[id]],
-      data: { how: 'hunting', severity: Math.round(sev * 100) / 100 },
-    });
-    c.phase[id] = PHASE_RETURN;
-  }
+  huntInjury(sim, id, rng);
+}
+
+function huntInjury(sim: Simulation, id: number, rng: Rng): void {
+  const c = sim.agents.cols;
+  const rc = sim.cfg.resources;
+  const str = strength(sim, id);
+  if (!rng.chance(rc.huntInjuryPerStep * (1.5 - Math.min(1, str)) * (carryingInfant(sim, id) ? 3 : 1))) return;
+  const sev = rc.huntInjurySeverity * (0.5 + rng.next());
+  c.injury[id] = Math.min(1, c.injury[id] + sev);
+  c.injuryCause[id] = CAUSE_HUNTING;
+  c.injuryEventId[id] = sim.events.emit(sim.tick, {
+    type: 'agent.injured', causes: [], x: c.x[id], y: c.y[id], agents: [id], clans: [c.clanId[id]],
+    data: { how: 'hunting', severity: Math.round(sev * 100) / 100 },
+  });
+  const lead = c.partyLeader[id];
+  if (lead === NO_ID) c.phase[id] = PHASE_RETURN;
 }
 
 function carryingInfant(sim: Simulation, id: number): boolean {

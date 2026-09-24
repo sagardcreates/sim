@@ -1,5 +1,5 @@
 {
-  "configVersion": 2,
+  "configVersion": 3,
   "time": {
     "daysPerYear": 365,
     "subStepsPerDay": 8
@@ -242,5 +242,80 @@
     "keepReserveDays": 1.0,
     "childWeight": 1.0,
     "adultKinWeight": 0.6
+  },
+  "relations": {
+    "cap": 60,
+    "decay": {
+      "affinity": 0.0015,
+      "deference": 0.001,
+      "grudge": 0.0006,
+      "familiarity": 0.002
+    }
+  },
+  "social": {
+    "kinAffinityBoost": 0.5,
+    "nightContacts": 2,
+    "nightAffinity": 0.01,
+    "nightFamiliarity": 0.03,
+    "socializeContacts": 5,
+    "socializeAffinity": 0.05,
+    "socializeFamiliarity": 0.08,
+    "socializeTemperature": 0.2,
+    "courtBias": 0.3,
+    "fieldEncounterRadius": 1.5,
+    "fieldEncounterAffinity": 0.015,
+    "fieldEncounterFamiliarity": 0.05,
+    "fieldEncountersPerStep": 2,
+    "giftAffinity": 0.06,
+    "giftHungerBonus": 0.25,
+    "giftDeference": 0.02,
+    "giftFamiliarity": 0.02,
+    "depositWitnesses": 3,
+    "depositAffinity": 0.02,
+    "friendWeight": 0.5,
+    "freeRideThreshold": 2.0,
+    "freeRideJudgement": 0.04,
+    "freeRideWitnesses": 3,
+    "contributionEmaDays": 60,
+    "socializeBase": 0.02,
+    "socializeSociability": 0.12,
+    "courtWeight": 0.1,
+    "courtAffinity": 0.15,
+    "nightTemperature": 0.15,
+    "nightExplore": 0.2,
+    "friendMinAffinity": 0.2,
+    "maxFriendRecipients": 8
+  },
+  "hunting": {
+    "groupSynergy": 0.1,
+    "bigGamePerMember": 0.15,
+    "maxParty": 6,
+    "joinTemperature": 0.1,
+    "joinAffinityWeight": 0.3
+  },
+  "clans": {
+    "loyaltyCheckDays": 30,
+    "switchMargin": 0.4,
+    "stayBias": 0.2,
+    "affinityWeight": 1.0,
+    "kinWeight": 2.0,
+    "grudgeWeight": 1.0,
+    "partnerLoyalty": 1.5,
+    "leadershipWeight": 1.0,
+    "foodWeight": 2.0,
+    "lonerValue": 0.0,
+    "leaveThreshold": -1.5,
+    "joinBase": -0.5,
+    "joinAffWeight": 3.0,
+    "joinTrustWeight": 2.0,
+    "joinFoodWeight": 1.0,
+    "joinTemperature": 0.5,
+    "expelAffinity": -0.3,
+    "fissionMinSize": 30,
+    "fissionCapacityRatio": 0.9,
+    "fissionModularity": 0.25,
+    "fissionMinAdults": 6,
+    "fissionMinDeferenceShare": 0.15,
+    "fissionMinDistance": 12
   }
 }

@@ -31,20 +31,29 @@ export function runJob(job: RunJob): RunResult {
   const initial = sim.agents.living.length;
   const dpy = sim.cfg.time.daysPerYear;
   for (let y = 0; y < job.years && sim.agents.living.length > 0; y++) sim.run(dpy);
-  let campMoves = 0;
-  let droughts = 0;
-  let epidemics = 0;
-  for (const e of sim.events.macro.values()) {
-    if (e.type === 'clan.camp_moved') campMoves++;
-    if (e.type === 'climate.drought_began') droughts++;
-    if (e.type === 'epidemic.outbreak') epidemics++;
-  }
+  const count: Record<string, number> = {};
+  for (const e of sim.events.macro.values()) count[e.type] = (count[e.type] ?? 0) + 1;
+  const clanCounts = sim.stats.years.slice(1).map((y) => y.clans.filter((c) => c.size > 0).length);
+  const campMoves = count['clan.camp_moved'] ?? 0;
+  const droughts = count['climate.drought_began'] ?? 0;
+  const epidemics = count['epidemic.outbreak'] ?? 0;
   return {
     job,
     demography: measureDemography(sim, initial),
     stateHash: sim.stateHash(),
     wallSeconds: (performance.now() - t0) / 1000,
     yearly: job.yearly ? sim.stats.years : undefined,
-    extra: { campMoves, droughts, epidemics, clansExtant: sim.clans.extant().length },
+    extra: {
+      campMoves, droughts, epidemics, clansExtant: sim.clans.extant().length,
+      fissions: count['clan.fission'] ?? 0,
+      dissolutions: count['clan.dissolved'] ?? 0,
+      joins: count['agent.joined_clan'] ?? 0,
+      expulsions: count['agent.expelled'] ?? 0,
+      minClans: clanCounts.length ? Math.min(...clanCounts) : 0,
+      maxClans: clanCounts.length ? Math.max(...clanCounts) : 0,
+      finalClans: clanCounts.length ? clanCounts[clanCounts.length - 1] : 0,
+      loners: sim.clanMembers.get(-1)?.length ?? 0,
+      ...sim.acceptanceMetrics(),
+    },
   };
 }

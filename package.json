@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sim.json",
     "test": "vitest run",
     "sweep": "tsx src/cli/sweep.ts",
-    "compare": "tsx src/cli/compare.ts"
+    "compare": "tsx src/cli/compare.ts",
+    "accept": "tsx src/cli/accept.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",

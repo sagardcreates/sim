@@ -24,6 +24,10 @@ function describeEvent(s: Simulation, e: SimEvent): string | undefined {
     case 'climate.drought_ended': return `Year ${y}: the drought ended.`;
     case 'epidemic.outbreak': return `Year ${y}: an epidemic broke out in ${s.clans.label(e.clans![0])}.`;
     case 'clan.dissolved': return `Year ${y}: ${s.clans.label(e.clans![0])} dissolved.`;
+    case 'clan.founded': return d.initial ? undefined : `Year ${y}: ${s.clans.label(e.clans![0])} split from ${s.clans.label(e.clans![1])}, led by ${n(e.agents![0])}.`;
+    case 'agent.joined_clan': return d.reason === 'founded a new clan' ? undefined : `Year ${y}: ${n(e.agents![0])} joined ${s.clans.label(e.clans![0])} (${d.reason}).`;
+    case 'agent.left_clan': return d.to === -1 ? `Year ${y}: ${n(e.agents![0])} left ${s.clans.label(e.clans![0])} to live alone.` : undefined;
+    case 'agent.expelled': return `Year ${y}: ${n(e.agents![0])} was driven out of ${s.clans.label(e.clans![0])}.`;
     default: return undefined;
   }
 }
@@ -55,6 +59,18 @@ function inspect(s: Simulation, id: number): string[] {
   if (kids.length) lines.push(`children: ${kids.map((k) => s.agents.names[k] + (c.alive[k] ? '' : ' †')).join(', ')}`);
   const m = c.motherId[id];
   if (m !== NO_ID) lines.push(`mother: ${s.agents.names[m]}${c.alive[m] ? '' : ' †'}`);
+  // Relationships (labels are display-only derivations).
+  const rels: { o: number; aff: number; grudge: number; fam: number }[] = [];
+  s.rel.forEach(slot, s.tick, (o, v) => {
+    if (c.alive[o]) rels.push({ o, aff: v.aff, grudge: v.grudge, fam: v.fam });
+  });
+  const label = (r: { o: number; aff: number; grudge: number }) =>
+    r.o === p ? 'partner' : r.grudge > 0.4 || r.aff < -0.4 ? 'enemy' : r.grudge > 0.15 ? 'rival' : r.aff > 0.5 ? 'friend' : 'acquaintance';
+  const friends = [...rels].sort((a, b) => b.aff - a.aff).slice(0, 4);
+  if (friends.length) lines.push(`close to: ${friends.map((r) => `${s.agents.names[r.o]} (${label(r)}${c.clanId[r.o] !== c.clanId[id] ? ', ' + s.clans.label(c.clanId[r.o]) : ''})`).join(', ')}`);
+  const foes = rels.filter((r) => r.grudge > 0.15 || r.aff < -0.2).sort((a, b) => b.grudge - a.grudge).slice(0, 3);
+  if (foes.length) lines.push(`at odds with: ${foes.map((r) => `${s.agents.names[r.o]} (${label(r)})`).join(', ')}`);
+  lines.push(`knows ${rels.length} people`);
   return lines;
 }
 

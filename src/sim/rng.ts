@@ -118,6 +118,37 @@ export class Rng {
     return n - 1;
   }
 
+  /**
+   * Softmax weights as a cumulative distribution, for drawing several samples
+   * from the same scores (each draw is equivalent to `softmax`).
+   */
+  static softmaxCumulative(scores: ArrayLike<number>, temperature: number, out?: Float64Array): Float64Array {
+    const n = scores.length;
+    const t = Math.max(temperature, 1e-6);
+    const cum = out && out.length >= n ? out : new Float64Array(n);
+    let max = -Infinity;
+    for (let i = 0; i < n; i++) if (scores[i] > max) max = scores[i];
+    let acc = 0;
+    for (let i = 0; i < n; i++) {
+      acc += Math.exp((scores[i] - max) / t);
+      cum[i] = acc;
+    }
+    return cum;
+  }
+
+  /** Draws an index from a cumulative distribution (first n entries). */
+  sampleCumulative(cum: Float64Array, n: number): number {
+    const r = this.next() * cum[n - 1];
+    let lo = 0;
+    let hi = n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] > r) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  }
+
   getState(): RngState {
     return { a: this.a, b: this.b, c: this.c, d: this.d };
   }

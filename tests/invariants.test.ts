@@ -19,6 +19,11 @@ describe('simulation invariants over 3 years', () => {
       const p = c.partnerId[id];
       if (p !== NO_ID && c.alive[p] && c.partnerId[p] !== id) violations.push('asymmetric partnership');
       if (c.repState[id] === REP_PREGNANT && c.sex[id] !== SEX_FEMALE) violations.push('pregnant male');
+      const clan = c.clanId[id];
+      if (clan !== NO_ID && (!sim.clans.get(clan) || sim.clans.get(clan)!.dissolvedTick >= 0)) violations.push('member of missing clan');
+      sim.rel.forEach(c.slot[id], sim.tick, (o) => {
+        if (o === id) violations.push('self relationship');
+      });
     }
   };
   for (let d = 0; d < 3 * 365; d++) {

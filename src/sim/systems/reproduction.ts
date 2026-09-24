@@ -13,6 +13,8 @@ import {
 } from '../state/agents';
 import { ageYears, clamp01, isAlive, placeAtHome, smoothstep } from './common';
 import { killAgent } from './mortality';
+import { applyResidence } from './clans';
+import { feltAffinity } from './social';
 
 const GENES = ['Build', 'Robustness', 'Fertility', 'Boldness', 'Sociability', 'Temper'] as const;
 const COSMETIC = ['gSkin', 'gHeight', 'gHair'] as const;
@@ -102,6 +104,8 @@ function giveBirth(sim: Simulation, mother: number, rng: Rng): void {
   c.rearerId[kid] = c.partnerId[mother];
   c.clanId[kid] = clanId;
   c.birthClanId[kid] = clanId;
+  c.ownHomeX[kid] = c.ownHomeX[mother];
+  c.ownHomeY[kid] = c.ownHomeY[mother];
   c.energy[kid] = 0.8;
   c.condition[kid] = 0.8;
   c.health[kid] = 1;
@@ -166,39 +170,51 @@ function ancestorName(sim: Simulation, mother: number, father: number, rng: Rng)
 }
 
 /**
- * Court/Mate: an unpaired adult evaluates unpaired opposite-sex adults at the
- * same camp; attraction weights health, similar age, cultural similarity and
- * noise. The other must find them acceptable too (mutual choice). Kin with
- * r >= incestRelatedness and co-reared individuals are never considered.
+ * Court/Mate (§6): an unpaired woman considers unpaired men she knows (her
+ * relationship map, any clan) and unpaired men at her own camp. Courtship
+ * requires mutual affinity above a threshold; attraction weights health,
+ * received deference, cultural similarity and noise, and he must accept too.
+ * Kin with r >= incestRelatedness and co-reared individuals are excluded.
+ * Cross-clan pairs then apply the residence rule (who changes clan).
  */
 function pairing(sim: Simulation, rng: Rng): void {
   const c = sim.agents.cols;
   const rc = sim.cfg.reproduction;
   const l = sim.cfg.life;
-  for (const [, members] of sim.clanMembers) {
-    const single = members.filter((id) => c.alive[id] && !isAlive(sim, c.partnerId[id]) && ageYears(sim, id) >= l.pairMinAgeYears);
-    if (single.length < 2) continue;
-    for (const f of single) {
-      if (c.sex[f] !== SEX_FEMALE || isAlive(sim, c.partnerId[f]) || !rng.chance(rc.pairingDailyProb)) continue;
-      const cands: number[] = [];
-      const vals: number[] = [];
-      for (const m of single) {
-        if (c.sex[m] !== SEX_MALE || isAlive(sim, c.partnerId[m])) continue;
-        const v = attraction(sim, f, m, rng);
-        if (v === -Infinity) continue;
-        cands.push(m);
-        vals.push(v);
+  const sc = sim.cfg.social;
+  const eligible = (id: number) => c.alive[id] === 1 && !isAlive(sim, c.partnerId[id]) && ageYears(sim, id) >= l.pairMinAgeYears;
+  for (const f of sim.shuffledLiving(rng)) {
+    if (c.sex[f] !== SEX_FEMALE || !eligible(f) || !rng.chance(rc.pairingDailyProb)) continue;
+    const seen = new Set<number>();
+    const pool: number[] = [];
+    sim.rel.forEach(c.slot[f], sim.tick, (o) => {
+      if (c.sex[o] === SEX_MALE && eligible(o)) {
+        seen.add(o);
+        pool.push(o);
       }
-      if (cands.length === 0) continue;
-      const k = rng.softmax(vals, rc.pairingTemperature);
-      const m = cands[k];
-      if (vals[k] < rc.pairingAcceptThreshold || attraction(sim, m, f, rng) < rc.pairingAcceptThreshold) continue;
-      formPair(sim, f, m);
+    });
+    if (c.clanId[f] >= 0) {
+      for (const m of sim.clanMembers.get(c.clanId[f]) ?? []) if (!seen.has(m) && c.sex[m] === SEX_MALE && eligible(m)) pool.push(m);
     }
+    const cands: number[] = [];
+    const vals: number[] = [];
+    for (const m of pool) {
+      if (feltAffinity(sim, f, m) < sc.courtAffinity || feltAffinity(sim, m, f) < sc.courtAffinity) continue;
+      const v = attraction(sim, f, m, rng);
+      if (v === -Infinity) continue;
+      cands.push(m);
+      vals.push(v);
+    }
+    if (cands.length === 0) continue;
+    const k = rng.softmax(vals, rc.pairingTemperature);
+    const m = cands[k];
+    if (vals[k] < rc.pairingAcceptThreshold || attraction(sim, m, f, rng) < rc.pairingAcceptThreshold) continue;
+    const ev = formPair(sim, f, m);
+    applyResidence(sim, f, m, ev);
   }
 }
 
-export function formPair(sim: Simulation, a: number, b: number): void {
+export function formPair(sim: Simulation, a: number, b: number): number {
   const c = sim.agents.cols;
   c.partnerId[a] = b;
   c.partnerId[b] = a;
@@ -208,6 +224,7 @@ export function formPair(sim: Simulation, a: number, b: number): void {
   c.pairEventId[a] = ev;
   c.pairEventId[b] = ev;
   sim.stats.day.pairs++;
+  return ev;
 }
 
 /** How attractive `b` is to `a`, or -Infinity if not eligible (kin, co-reared, age gap). */
@@ -219,5 +236,7 @@ export function attraction(sim: Simulation, a: number, b: number, rng: Rng): num
   if (sim.relatedness(a, b) >= rc.incestRelatedness || sim.pedigree.coReared(a, b)) return -Infinity;
   const culturalSim = 1 - (Math.abs(c.cSharing[a] - c.cSharing[b]) + Math.abs(c.cViolence[a] - c.cViolence[b])
     + (c.cMarker[a] === c.cMarker[b] ? 0 : 1)) / 3;
-  return 0.4 * c.health[b] + 0.3 * (1 - gap / rc.pairingMaxAgeGapYears) + 0.2 * culturalSim + 0.2 * rng.next();
+  const deference = sim.statusOf(b);
+  return 0.4 * c.health[b] + 0.3 * (1 - gap / rc.pairingMaxAgeGapYears) + 0.2 * culturalSim + 0.2 * deference
+    + 0.2 * feltAffinity(sim, a, b) + 0.2 * rng.next();
 }
