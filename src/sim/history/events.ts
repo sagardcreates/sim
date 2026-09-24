@@ -6,18 +6,25 @@
 
 export type EventType =
   | 'sim.start'
+  | 'year.end'
   | 'clan.founded'
+  | 'clan.dissolved'
+  | 'clan.camp_moved'
   | 'agent.born'
   | 'agent.died'
-  | 'year.end';
+  | 'agent.injured'
+  | 'agent.miscarriage'
+  | 'agent.stillbirth'
+  | 'pair.formed'
+  | 'climate.drought_began'
+  | 'climate.drought_ended'
+  | 'epidemic.outbreak'
+  | 'epidemic.ended';
 
-/** Event types retained permanently. Everything else is micro. */
+/** Event types retained permanently. Everything else is micro (rolling buffer + yearly counts). */
 export const MACRO_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
-  'sim.start',
-  'clan.founded',
-  'agent.born',
-  'agent.died',
-  'year.end',
+  'sim.start', 'year.end', 'clan.founded', 'clan.dissolved', 'clan.camp_moved', 'agent.born', 'agent.died',
+  'pair.formed', 'climate.drought_began', 'climate.drought_ended', 'epidemic.outbreak', 'epidemic.ended',
 ]);
 
 export interface SimEvent {

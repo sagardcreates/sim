@@ -11,10 +11,13 @@
     "calibrate": "tsx src/cli/calibrate.ts",
     "lint": "eslint src tests",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sim.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sweep": "tsx src/cli/sweep.ts",
+    "compare": "tsx src/cli/compare.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",

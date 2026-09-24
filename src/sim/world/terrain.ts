@@ -18,11 +18,15 @@ export interface World {
   height: number;
   // static
   biome: Uint8Array;
+  /** 1 for river tiles (water, but fordable at riverMovementCost). */
+  river: Uint8Array;
   elevation: Float64Array;
   moisture: Float64Array;
   movementCost: Float64Array;
   plantCapacity: Float64Array;
   regrowthRate: Float64Array;
+  /** Game density the tile recovers toward. */
+  gameCapacity: Float64Array;
   /** Chebyshev distance (tiles) to nearest water tile, capped at 255. */
   waterDistance: Uint8Array;
   /** 1 within waterAccessRadius, falling to 0 beyond it. */
@@ -40,6 +44,10 @@ export function tileIndex(w: World, x: number, y: number): number {
 
 export function isWater(w: World, x: number, y: number): boolean {
   return w.biome[tileIndex(w, x, y)] === BIOME_WATER;
+}
+
+export function isPassableTile(w: World, i: number, impassableCost: number): boolean {
+  return w.movementCost[i] < impassableCost;
 }
 
 export function generateWorld(cfg: SimConfig, rng: Rng): World {
@@ -75,7 +83,9 @@ export function generateWorld(cfg: SimConfig, rng: Rng): World {
     else biome[i] = BIOME_GRASSLAND;
   }
 
-  carveRivers(W, H, elevation, biome, wc.riverCount, wc.riverMinSourceElevation, rng);
+  const river = new Uint8Array(n);
+  carveRivers(W, H, elevation, biome, river, wc.riverCount, wc.riverMinSourceElevation, rng);
+  if (wc.barrier.enabled) applyBarrier(W, H, biome, river, elevation, wc.barrier);
 
   const waterDistance = computeWaterDistance(W, H, biome);
   const waterAccess = new Float64Array(n);
@@ -84,13 +94,16 @@ export function generateWorld(cfg: SimConfig, rng: Rng): World {
   const regrowthRate = new Float64Array(n);
   const plantFood = new Float64Array(n);
   const gameDensity = new Float64Array(n);
+  const gameCapacity = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     const p = wc.biomes[BIOME_NAMES[biome[i]]];
-    movementCost[i] = p.movementCost;
-    plantCapacity[i] = p.plantCapacity;
-    regrowthRate[i] = p.regrowthRate;
-    plantFood[i] = p.plantCapacity;
-    gameDensity[i] = p.gameDensity;
+    movementCost[i] = river[i] === 2 ? wc.impassableCost * 2 : river[i] ? wc.riverMovementCost : p.movementCost;
+    const barrier = river[i] === 2;
+    plantCapacity[i] = barrier ? 0 : p.plantCapacity * cfg.resources.plantUnitsPerCapacity;
+    regrowthRate[i] = barrier ? 0 : p.regrowthRate;
+    plantFood[i] = plantCapacity[i];
+    gameCapacity[i] = barrier ? 0 : p.gameDensity;
+    gameDensity[i] = gameCapacity[i];
     const d = waterDistance[i];
     waterAccess[i] = d <= wc.waterAccessRadius ? 1 : Math.max(0, 1 - (d - wc.waterAccessRadius) / wc.waterAccessRadius);
   }
@@ -99,11 +112,13 @@ export function generateWorld(cfg: SimConfig, rng: Rng): World {
     width: W,
     height: H,
     biome,
+    river,
     elevation,
     moisture,
     movementCost,
     plantCapacity,
     regrowthRate,
+    gameCapacity,
     waterDistance,
     waterAccess,
     plantFood,
@@ -124,7 +139,7 @@ function normalize(a: Float64Array): void {
 
 /** Rivers flow downhill from high sources until they hit water or the map edge. */
 function carveRivers(
-  W: number, H: number, elevation: Float64Array, biome: Uint8Array,
+  W: number, H: number, elevation: Float64Array, biome: Uint8Array, river: Uint8Array,
   count: number, minSource: number, rng: Rng,
 ): void {
   const sources: number[] = [];
@@ -136,6 +151,7 @@ function carveRivers(
     for (let steps = 0; steps < W * H; steps++) {
       if (biome[i] === BIOME_WATER && steps > 0) break;
       biome[i] = BIOME_WATER;
+      river[i] = 1;
       visited.add(i);
       const x = i % W;
       const y = (i / W) | 0;
@@ -154,6 +170,33 @@ function carveRivers(
       }
       if (best < 0) break;
       i = best;
+    }
+  }
+}
+
+/**
+ * Experiment 4 (isolation): an impassable mountain ridge across the map,
+ * optionally with passes. Tiles become hills with river marker 2, which the
+ * field setup turns into impassable, foodless tiles.
+ */
+function applyBarrier(
+  W: number, H: number, biome: Uint8Array, river: Uint8Array, elevation: Float64Array,
+  b: { orientation: string; position: number; width: number; gapCount: number },
+): void {
+  const vertical = b.orientation === 'vertical';
+  const len = vertical ? H : W;
+  const center = Math.floor((vertical ? W : H) * b.position);
+  const gapEvery = b.gapCount > 0 ? Math.floor(len / (b.gapCount + 1)) : 0;
+  for (let t = 0; t < len; t++) {
+    if (gapEvery > 0 && t % gapEvery === 0 && t > 0) continue;
+    for (let o = -Math.floor(b.width / 2); o <= Math.floor(b.width / 2); o++) {
+      const x = vertical ? center + o : t;
+      const y = vertical ? t : center + o;
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const i = y * W + x;
+      biome[i] = BIOME_HILLS;
+      river[i] = 2; // marker: barrier (impassable)
+      elevation[i] = 1;
     }
   }
 }

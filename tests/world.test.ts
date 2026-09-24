@@ -3,6 +3,7 @@ import { makeConfig } from '../src/sim/config';
 import { Simulation } from '../src/sim/sim';
 import { BIOME_WATER, isWater } from '../src/sim/world/terrain';
 
+
 describe('world + initial population invariants', () => {
   const cfg = makeConfig();
   const sim = Simulation.create(11, cfg);
@@ -25,11 +26,14 @@ describe('world + initial population invariants', () => {
     }
   });
 
-  it('places agents on land and never moves them into water', () => {
+  it('places agents on land and never moves them onto impassable tiles (lakes; rivers are fordable)', () => {
     expect(sim.agents.living.length).toBe(cfg.init.clanCount * cfg.init.agentsPerClan);
-    sim.run(200);
     const { x, y } = sim.agents.cols;
-    for (const id of sim.agents.living) expect(isWater(sim.world, x[id], y[id])).toBe(false);
+    const w = sim.world;
+    const passable = () => sim.agents.living.every((id) => w.movementCost[Math.floor(y[id]) * w.width + Math.floor(x[id])] < cfg.world.impassableCost);
+    expect(passable()).toBe(true);
+    sim.run(200);
+    expect(passable()).toBe(true);
   });
 
   it('has an age pyramid with more young than old', () => {

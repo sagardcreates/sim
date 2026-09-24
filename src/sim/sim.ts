@@ -5,37 +5,72 @@
  */
 import { configHash, makeConfig, stableStringify, type SimConfig } from './config';
 import { StateHasher } from './hash';
-import { EventLog } from './history/events';
+import { EventLog, type SimEvent } from './history/events';
+import { Stats, type DayCounters, type YearStats } from './history/stats';
 import type { SyllableSet } from './names';
-import { RngStreams, type RngState } from './rng';
-import { AGENT_FIELDS, AgentStore } from './state/agents';
+import { RngStreams, type Rng, type RngState } from './rng';
+import { AGENT_FIELDS, AgentStore, NO_ID } from './state/agents';
 import { ClanRegistry, type Clan } from './state/clans';
+import { MindStore, type MindSnapshot } from './state/mind';
+import { KinIndex, Pedigree } from './state/pedigree';
+import { campSystem } from './systems/camps';
+import { climateSystem, initialClimate, type ClimateState } from './systems/climate';
+import { decisionSystem } from './systems/decision';
 import { populate } from './systems/init';
-import { movementSubStep } from './systems/movement';
-import { generateWorld, type World } from './world/terrain';
+import { metabolismSystem } from './systems/metabolism';
+import { epidemicSystem, mortalitySystem } from './systems/mortality';
+import { drinkAtNight, movementSubStep } from './systems/movement';
+import { provisionSystem } from './systems/provision';
+import { reproductionSystem } from './systems/reproduction';
+import { resourcesSystem } from './systems/resources';
 import { deepClone } from './util';
+import { FlowFields } from './world/flowfield';
+import { SpatialHash } from './world/spatial';
+import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm0.1';
+export const CODE_VERSION = 'm1.0';
+
+export interface Grave {
+  id: number;
+  x: number;
+  y: number;
+  tick: number;
+}
 
 export class Simulation {
   tick = 0;
   readonly rng: RngStreams;
   world: World;
   agents = new AgentStore();
+  mind: MindStore;
+  pedigree: Pedigree;
+  /** Known kin (derived from the pedigree). */
+  kin: KinIndex;
   clans = new ClanRegistry();
   events: EventLog;
+  stats = new Stats();
+  climate: ClimateState = initialClimate();
   syllables = new Map<number, SyllableSet>();
+  graves: Grave[] = [];
+  // --- caches / derived (not state; rebuilt deterministically) ---
+  fields: FlowFields;
+  spatial: SpatialHash;
+  /** clanId -> living member ids (ascending), rebuilt each day. */
+  clanMembers = new Map<number, number[]>();
   /** Read-only hook fired after every movement sub-step (render interpolation). */
   onSubStep?: (sim: Simulation, subStep: number) => void;
-  /** Reusable processing-order buffer. */
-  private order: number[] = [];
 
   private constructor(readonly seed: number, readonly cfg: SimConfig) {
     this.rng = new RngStreams(seed);
     // Terrain uses its own stream so it's identical for any population/behavior config.
     this.world = generateWorld(cfg, this.rng.get('terrain'));
     this.events = new EventLog(cfg.history.microBufferSize);
+    this.mind = new MindStore(cfg.memory.placeCap, cfg.movement.maxPathLength);
+    this.pedigree = new Pedigree(this.agents);
+    this.kin = new KinIndex(this.agents, this.pedigree);
+    this.fields = new FlowFields(this.world, cfg.world.impassableCost, cfg.movement.fieldRadiusCost, cfg.movement.fieldCacheSize);
+    this.spatial = new SpatialHash(this.world.width, this.world.height, 4);
   }
 
   static create(seed: number, cfg: SimConfig = makeConfig()): Simulation {
@@ -44,7 +79,9 @@ export class Simulation {
       type: 'sim.start', causes: [],
       data: { seed, codeVersion: CODE_VERSION, configHash: configHash(cfg) },
     });
-    populate(sim.world, cfg, sim.rng.get('init'), sim.agents, sim.clans, sim.events, sim.syllables, start);
+    populate(sim, start);
+    sim.kin.rebuildAll();
+    sim.rebuildDerived();
     return sim;
   }
 
@@ -56,26 +93,104 @@ export class Simulation {
     return this.tick % this.cfg.time.daysPerYear;
   }
 
-  /** Advance one day, running systems in §5 order. Systems not yet built are listed as stubs. */
+  /** Called for every new agent (founders and births). */
+  onCreated(id: number): void {
+    this.agents.cols.slot[id] = this.mind.alloc();
+  }
+
+  /** Called after an agent is marked dead. */
+  onDied(id: number): void {
+    const c = this.agents.cols;
+    this.mind.release(c.slot[id]);
+    c.slot[id] = NO_ID;
+  }
+
+  /** Shuffled copy of the living ids (§0.5: processing order shuffled every tick). */
+  shuffledLiving(rng: Rng): number[] {
+    return rng.shuffle([...this.agents.living]) as number[];
+  }
+
+  /** Relatedness as agents know it (kin up to first cousins; 0 otherwise). */
+  relatedness(a: number, b: number): number {
+    return this.kin.r(a, b);
+  }
+
+  /** Status = deference received (derived). Deference arrives in M3. */
+  statusOf(id: number): number {
+    void id;
+    return 0;
+  }
+
+  /** Weight of an agent's voice in collective choices (deference-based from M3). */
+  influence(id: number): number {
+    void id;
+    return 1;
+  }
+
+  rebuildDerived(): void {
+    this.clanMembers.clear();
+    const c = this.agents.cols;
+    for (const id of this.agents.living) {
+      const k = c.clanId[id];
+      let arr = this.clanMembers.get(k);
+      if (!arr) this.clanMembers.set(k, (arr = []));
+      arr.push(id);
+    }
+  }
+
+  /** Advance one day, running systems in §5 order. */
   step(): void {
-    // Climate, Resources, Metabolism, Perception, Decision: M1+.
+    this.rebuildDerived();
+    climateSystem(this);
+    resourcesSystem(this);
+    metabolismSystem(this);
+    // Perception happens where agents work (movement sub-steps) and from memory.
+    this.rebuildDerived();
+    decisionSystem(this);
     const orderRng = this.rng.get('order');
     const moveRng = this.rng.get('movement');
     for (let s = 0; s < this.cfg.time.subStepsPerDay; s++) {
-      this.order.length = 0;
-      for (const id of this.agents.living) this.order.push(id);
-      orderRng.shuffle(this.order);
-      movementSubStep(this.order, this.agents, this.clans, this.world, this.cfg, moveRng);
-      // Encounters, Interaction resolution: M2+.
+      const order = this.shuffledLiving(orderRng);
+      movementSubStep(this, order, s, moveRng);
+      // Encounters / interaction resolution: M2+.
       this.onSubStep?.(this, s);
     }
-    // Reproduction, Mortality, Social, Culture, Clan, Leadership, Historian: M1+.
+    drinkAtNight(this);
+    provisionSystem(this);
+    reproductionSystem(this);
+    epidemicSystem(this);
+    this.rebuildDerived();
+    mortalitySystem(this);
+    this.rebuildDerived();
+    campSystem(this);
+    this.checkDissolution();
     this.tick++;
-    if (this.dayOfYear === 0) {
-      const year = this.year - 1;
-      this.events.emit(this.tick, { type: 'year.end', causes: [], data: { year, population: this.agents.living.length } });
-      this.events.closeYear(year);
+    if (this.dayOfYear === 0) this.closeYear();
+  }
+
+  private checkDissolution(): void {
+    for (const clan of this.clans.extant()) {
+      if ((this.clanMembers.get(clan.id)?.length ?? 0) > 0) continue;
+      clan.dissolvedTick = this.tick;
+      const ev = this.events.emit(this.tick, { type: 'clan.dissolved', causes: [], clans: [clan.id], x: clan.campX, y: clan.campY, data: { name: clan.name } });
+      clan.history.push(ev);
     }
+  }
+
+  private closeYear(): void {
+    const year = this.year - 1;
+    const c = this.agents.cols;
+    let e = 0;
+    for (const id of this.agents.living) e += c.energy[id];
+    this.stats.closeYear({
+      year,
+      population: this.agents.living.length,
+      meanEnergy: this.agents.living.length ? Math.round((e / this.agents.living.length) * 1000) / 1000 : 0,
+      drought: Math.round(this.climate.drought * 1000) / 1000,
+      clans: this.clans.extant().map((cl) => ({ id: cl.id, size: this.clanMembers.get(cl.id)?.length ?? 0 })),
+    });
+    this.events.emit(this.tick, { type: 'year.end', causes: [], data: { year, population: this.agents.living.length } });
+    this.events.closeYear(year);
   }
 
   run(days: number): void {
@@ -90,8 +205,11 @@ export class Simulation {
     for (const f of AGENT_FIELDS) h.string(f).typed(cols[f], this.agents.count);
     h.string(this.agents.names.join('|'));
     h.typed(Int32Array.from(this.agents.living));
+    for (const a of this.mind.hashArrays()) h.typed(a);
     h.string(stableStringify([...this.clans.clans.values()]));
     h.typed(this.world.plantFood).typed(this.world.gameDensity);
+    h.string(stableStringify(this.climate));
+    h.string(stableStringify(this.graves));
     h.string(stableStringify(this.rng.getState()));
     h.number(this.events.nextId);
     return h.digest();
@@ -108,10 +226,14 @@ export class Simulation {
       config: this.cfg,
       tick: this.tick,
       agents: { count: this.agents.count, names: [...this.agents.names], living: [...this.agents.living], cols: agentCols },
+      mind: this.mind.snapshot(),
       clans: { nextId: this.clans.nextId, list: [...this.clans.clans.values()].map((c) => deepClone(c)) },
       syllables: [...this.syllables.entries()].map(([id, s]) => [id, [...s.syllables]]),
       world: { plantFood: Array.from(this.world.plantFood), gameDensity: Array.from(this.world.gameDensity) },
+      climate: deepClone(this.climate),
+      graves: deepClone(this.graves),
       rng: this.rng.getState(),
+      stats: { day: deepClone(this.stats.day), years: deepClone(this.stats.years) },
       events: {
         nextId: this.events.nextId,
         macro: [...this.events.macro.values()],
@@ -137,16 +259,24 @@ export class Simulation {
       cols[f].fill(0);
       cols[f].set(snap.agents.cols[f]);
     }
+    sim.mind.restore(snap.mind);
+    sim.pedigree.rebuild();
+    sim.kin.rebuildAll();
     sim.clans.nextId = snap.clans.nextId;
     for (const c of snap.clans.list) sim.clans.clans.set(c.id, deepClone(c));
     for (const [id, syl] of snap.syllables) sim.syllables.set(id, { syllables: [...syl] });
     sim.world.plantFood.set(snap.world.plantFood);
     sim.world.gameDensity.set(snap.world.gameDensity);
+    sim.climate = deepClone(snap.climate);
+    sim.graves = deepClone(snap.graves);
     sim.rng.setState(snap.rng);
+    sim.stats.day = deepClone(snap.stats.day);
+    sim.stats.years = deepClone(snap.stats.years);
     sim.events.nextId = snap.events.nextId;
     for (const e of snap.events.macro) sim.events.macro.set(e.id, e);
     for (const [k, v] of Object.entries(snap.events.yearCounts)) sim.events.yearCounts.set(k, v);
     sim.events.yearlyAggregates = deepClone(snap.events.yearlyAggregates);
+    sim.rebuildDerived();
     return sim;
   }
 }
@@ -157,13 +287,17 @@ export interface SimSnapshot {
   config: SimConfig;
   tick: number;
   agents: { count: number; names: string[]; living: number[]; cols: Record<string, number[]> };
+  mind: MindSnapshot;
   clans: { nextId: number; list: Clan[] };
   syllables: [number, string[]][];
   world: { plantFood: number[]; gameDensity: number[] };
+  climate: ClimateState;
+  graves: Grave[];
   rng: Record<string, RngState>;
+  stats: { day: DayCounters; years: YearStats[] };
   events: {
     nextId: number;
-    macro: import('./history/events').SimEvent[];
+    macro: SimEvent[];
     yearCounts: Record<string, number>;
     yearlyAggregates: { year: number; counts: Record<string, number> }[];
   };

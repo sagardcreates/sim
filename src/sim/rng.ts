@@ -25,6 +25,8 @@ export interface RngState {
   d: number;
 }
 
+let softmaxScratch = new Float64Array(64);
+
 export class Rng {
   private a: number;
   private b: number;
@@ -102,7 +104,8 @@ export class Rng {
     let max = -Infinity;
     for (let i = 0; i < n; i++) if (scores[i] > max) max = scores[i];
     let sum = 0;
-    const w = new Float64Array(n);
+    if (softmaxScratch.length < n) softmaxScratch = new Float64Array(Math.max(n, 2 * softmaxScratch.length));
+    const w = softmaxScratch;
     for (let i = 0; i < n; i++) {
       w[i] = Math.exp((scores[i] - max) / t);
       sum += w[i];

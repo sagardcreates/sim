@@ -1,55 +1,19 @@
 /**
- * Config types. ALL tunable parameters live in configs/*.json; systems read
- * from SimConfig and never hard-code tunables (§17).
+ * Config. ALL tunable parameters live in configs/*.json; systems read from
+ * SimConfig and never hard-code tunables (§17). The type is derived from the
+ * default JSON so the two cannot drift.
  */
 import defaultConfigJson from '../../configs/default.json';
 import { hashString } from './rng';
 import { deepClone } from './util';
 
-export type BiomeName = 'grassland' | 'forest' | 'hills' | 'scrub' | 'water';
-
-export interface BiomeParams {
-  movementCost: number;
-  plantCapacity: number;
-  regrowthRate: number;
-  gameDensity: number;
-}
-
-export interface SimConfig {
-  configVersion: number;
-  time: { daysPerYear: number; subStepsPerDay: number };
-  world: {
-    width: number;
-    height: number;
-    elevationScale: number;
-    elevationOctaves: number;
-    moistureScale: number;
-    moistureOctaves: number;
-    riverCount: number;
-    riverMinSourceElevation: number;
-    lakeLevel: number;
-    hillLevel: number;
-    forestMoisture: number;
-    scrubMoisture: number;
-    biomes: Record<BiomeName, BiomeParams>;
-    waterAccessRadius: number;
-  };
-  init: {
-    clanCount: number;
-    agentsPerClan: number;
-    campMinSeparation: number;
-    campMaxWaterDistance: number;
-    agePyramidDecay: number;
-    maxInitialAge: number;
-    startSpreadRadius: number;
-  };
-  movement: { wanderStepTiles: number; homeRadius: number; homePull: number };
-  history: { microBufferSize: number };
-}
+export type SimConfig = typeof defaultConfigJson;
+export type BiomeName = keyof SimConfig['world']['biomes'];
+export type BiomeParams = SimConfig['world']['biomes']['grassland'];
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
 
-export const DEFAULT_CONFIG: SimConfig = defaultConfigJson as SimConfig;
+export const DEFAULT_CONFIG: SimConfig = defaultConfigJson;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
