@@ -18,7 +18,24 @@ const clansEl = document.getElementById('clans')!;
 const inspectEl = document.getElementById('inspect')!;
 const seedInput = document.getElementById('seed') as HTMLInputElement;
 
-let worker: Worker | undefined;
+/** Minimal channel shared by the real Worker and the main-thread fallback. */
+interface SimChannel {
+  postMessage(msg: ToWorker): void;
+  terminate(): void;
+  onmessage: ((ev: MessageEvent<FromWorker>) => void) | null;
+}
+
+async function mainThreadChannel(): Promise<SimChannel> {
+  const { handleMessage } = await import('../worker/host');
+  const ch: SimChannel = {
+    onmessage: null,
+    postMessage: (msg) => handleMessage(msg, (out) => ch.onmessage?.({ data: out } as MessageEvent<FromWorker>)),
+    terminate: () => handleMessage({ type: 'speed', daysPerSecond: 0 }, () => {}),
+  };
+  return ch;
+}
+
+let worker: SimChannel | undefined;
 let world: WorldMsg | undefined;
 let terrain: HTMLCanvasElement | undefined;
 let cur: DayMsg | undefined;
@@ -35,11 +52,31 @@ function send(msg: ToWorker): void {
   worker?.postMessage(msg);
 }
 
-function start(seed: number): void {
+async function start(seed: number): Promise<void> {
   worker?.terminate();
   cur = undefined;
   selectedId = -1;
-  worker = new Worker(new URL('../worker/sim.worker.ts', import.meta.url), { type: 'module' });
+  try {
+    const w = new Worker(new URL('../worker/sim.worker.ts', import.meta.url), { type: 'module' });
+    // A worker blocked by the host page fails asynchronously; fall back to the main thread.
+    w.addEventListener('error', () => {
+      if (worker === (w as unknown as SimChannel) && !cur) void startOnMainThread(seed);
+    });
+    worker = w as unknown as SimChannel;
+  } catch {
+    worker = await mainThreadChannel();
+  }
+  wire(seed);
+}
+
+async function startOnMainThread(seed: number): Promise<void> {
+  worker?.terminate();
+  worker = await mainThreadChannel();
+  wire(seed);
+}
+
+function wire(seed: number): void {
+  if (!worker) return;
   worker.onmessage = (ev: MessageEvent<FromWorker>) => {
     const m = ev.data;
     if (m.type === 'world') {
@@ -178,7 +215,7 @@ for (const [label, dps] of SPEEDS) {
   if (dps === 0) b.classList.add('active');
   speedsEl.appendChild(b);
 }
-document.getElementById('restart')!.onclick = () => start(Number(seedInput.value) || 1);
+document.getElementById('restart')!.onclick = () => void start(Number(seedInput.value) || 1);
 
-start(1);
+void start(1);
 requestAnimationFrame(draw);

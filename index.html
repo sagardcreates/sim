@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Terrarium · debug view</title>
+    <title>Terrarium</title>
     <style>
       :root { color-scheme: dark; --bg: #14161a; --panel: #1e2127; --fg: #e6e2d8; --muted: #8d8a82; --accent: #d8a657; }
       * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; height: 100vh; }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; height: 100vh; height: 100dvh; }
       #stage { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
       canvas { image-rendering: pixelated; max-width: 100%; max-height: 100%; cursor: crosshair; }
       aside { width: 280px; background: var(--panel); padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
@@ -20,6 +20,12 @@
       #clans div { display: flex; align-items: center; gap: 6px; }
       .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
       pre { margin: 0; white-space: pre-wrap; }
+      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      @media (max-width: 720px) {
+        body { flex-direction: column; height: auto; min-height: 100%; }
+        #stage { padding: 16px; }
+        aside { width: auto; padding: 16px; }
+      }
     </style>
   </head>
   <body>
