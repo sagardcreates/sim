@@ -6,6 +6,8 @@
  */
 
 export const WHY_TERMS = 3;
+/** Salient event memory ring size (§4). */
+export const MEM_CAP = 20;
 
 export class MindStore {
   capacity = 0;
@@ -27,6 +29,17 @@ export class MindStore {
   whyGoal = new Uint8Array(0);
   whyTerm = new Uint8Array(0);
   whyVal = new Float64Array(0);
+
+  // Salient event memories (witnessed or heard): type, subject (who did it), object (to whom),
+  // source event id, tick, hops from the witness, fidelity.
+  memType = new Uint8Array(0);
+  memSubject = new Int32Array(0);
+  memObject = new Int32Array(0);
+  memEvent = new Int32Array(0);
+  memTick = new Int32Array(0);
+  memHops = new Uint8Array(0);
+  memFid = new Float64Array(0);
+  memCount = new Int32Array(0);
 
   constructor(readonly placeCap: number, readonly maxPath: number) {
     this.grow(256);
@@ -51,6 +64,14 @@ export class MindStore {
     this.whyGoal = g(this.whyGoal, 1);
     this.whyTerm = g(this.whyTerm, WHY_TERMS);
     this.whyVal = g(this.whyVal, WHY_TERMS);
+    this.memType = g(this.memType, MEM_CAP);
+    this.memSubject = g(this.memSubject, MEM_CAP);
+    this.memObject = g(this.memObject, MEM_CAP);
+    this.memEvent = g(this.memEvent, MEM_CAP);
+    this.memTick = g(this.memTick, MEM_CAP);
+    this.memHops = g(this.memHops, MEM_CAP);
+    this.memFid = g(this.memFid, MEM_CAP);
+    this.memCount = g(this.memCount, 1);
     this.capacity = n;
   }
 
@@ -65,6 +86,7 @@ export class MindStore {
     this.pathLen[s] = 0;
     this.pathPos[s] = 0;
     this.whyGoal[s] = 0;
+    this.memCount[s] = 0;
     for (let k = 0; k < WHY_TERMS; k++) {
       this.whyTerm[s * WHY_TERMS + k] = 0;
       this.whyVal[s * WHY_TERMS + k] = 0;
@@ -83,6 +105,7 @@ export class MindStore {
     const n = this.placeCount[slot];
     for (let k = 0; k < n; k++) {
       if (this.placeTile[base + k] === tile) {
+        if (this.placeTick[base + k] > tick) return; // never overwrite fresher knowledge with older
         this.placePlant[base + k] = plant;
         this.placeGame[base + k] = game;
         this.placeTick[base + k] = tick;
@@ -136,6 +159,14 @@ export class MindStore {
       whyGoal: Array.from(this.whyGoal.subarray(0, hw)),
       whyTerm: Array.from(this.whyTerm.subarray(0, hw * WHY_TERMS)),
       whyVal: Array.from(this.whyVal.subarray(0, hw * WHY_TERMS)),
+      memType: Array.from(this.memType.subarray(0, hw * MEM_CAP)),
+      memSubject: Array.from(this.memSubject.subarray(0, hw * MEM_CAP)),
+      memObject: Array.from(this.memObject.subarray(0, hw * MEM_CAP)),
+      memEvent: Array.from(this.memEvent.subarray(0, hw * MEM_CAP)),
+      memTick: Array.from(this.memTick.subarray(0, hw * MEM_CAP)),
+      memHops: Array.from(this.memHops.subarray(0, hw * MEM_CAP)),
+      memFid: Array.from(this.memFid.subarray(0, hw * MEM_CAP)),
+      memCount: Array.from(this.memCount.subarray(0, hw)),
     };
   }
 
@@ -154,6 +185,14 @@ export class MindStore {
     this.whyGoal.set(s.whyGoal);
     this.whyTerm.set(s.whyTerm);
     this.whyVal.set(s.whyVal);
+    this.memType.set(s.memType);
+    this.memSubject.set(s.memSubject);
+    this.memObject.set(s.memObject);
+    this.memEvent.set(s.memEvent);
+    this.memTick.set(s.memTick);
+    this.memHops.set(s.memHops);
+    this.memFid.set(s.memFid);
+    this.memCount.set(s.memCount);
   }
 
   /** Arrays included in the state hash (up to highWater). */
@@ -166,6 +205,9 @@ export class MindStore {
       this.placeTick.subarray(0, hw * pc), this.placeCount.subarray(0, hw), this.pathTiles.subarray(0, hw * mp),
       this.pathLen.subarray(0, hw), this.pathPos.subarray(0, hw), this.whyGoal.subarray(0, hw),
       this.whyTerm.subarray(0, hw * WHY_TERMS), this.whyVal.subarray(0, hw * WHY_TERMS), Int32Array.from(this.free),
+      this.memType.subarray(0, hw * MEM_CAP), this.memSubject.subarray(0, hw * MEM_CAP), this.memObject.subarray(0, hw * MEM_CAP),
+      this.memEvent.subarray(0, hw * MEM_CAP), this.memTick.subarray(0, hw * MEM_CAP), this.memHops.subarray(0, hw * MEM_CAP),
+      this.memFid.subarray(0, hw * MEM_CAP), this.memCount.subarray(0, hw),
     ];
   }
 }
@@ -184,4 +226,12 @@ export interface MindSnapshot {
   whyGoal: number[];
   whyTerm: number[];
   whyVal: number[];
+  memType: number[];
+  memSubject: number[];
+  memObject: number[];
+  memEvent: number[];
+  memTick: number[];
+  memHops: number[];
+  memFid: number[];
+  memCount: number[];
 }

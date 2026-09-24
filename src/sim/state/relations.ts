@@ -60,6 +60,27 @@ export class RelationStore {
     return dt < DECAY_TABLE ? t[dt] : Math.pow(1 - rate, dt);
   }
 
+  // --- Direct per-entry accessors for hot loops: entry index i = slot * cap + k, k < count[slot]. ---
+  affAt(i: number, tick: number): number {
+    const dt = tick - this.seen[i];
+    return dt <= 0 ? this.aff[i] : this.aff[i] * (dt < DECAY_TABLE ? this.tAff[dt] : Math.pow(1 - this.decay.affinity, dt));
+  }
+
+  defAt(i: number, tick: number): number {
+    const dt = tick - this.seen[i];
+    return dt <= 0 ? this.def[i] : this.def[i] * (dt < DECAY_TABLE ? this.tDef[dt] : Math.pow(1 - this.decay.deference, dt));
+  }
+
+  grudgeAt(i: number, tick: number): number {
+    const dt = tick - this.seen[i];
+    return dt <= 0 ? this.grudge[i] : this.grudge[i] * (dt < DECAY_TABLE ? this.tGrudge[dt] : Math.pow(1 - this.decay.grudge, dt));
+  }
+
+  famAt(i: number, tick: number): number {
+    const dt = tick - this.seen[i];
+    return dt <= 0 ? this.fam[i] : this.fam[i] * (dt < DECAY_TABLE ? this.tFam[dt] : Math.pow(1 - this.decay.familiarity, dt));
+  }
+
   ensureSlots(n: number): void {
     while (this.capacity < n) this.grow(this.capacity * 2);
   }

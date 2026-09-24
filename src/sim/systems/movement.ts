@@ -154,6 +154,7 @@ function work(sim: Simulation, id: number, s: number, rng: Rng): void {
   } else if (c.goal[id] === GOAL_HUNT) {
     hunt(sim, id, t, rng);
   }
+  // GOAL_AVENGE: lurk (perceive, wait); encounters are resolved in fieldEncounters.
 }
 
 export function forageAt(sim: Simulation, id: number, t: number, rng: Rng, learner: boolean): void {

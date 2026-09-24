@@ -107,6 +107,8 @@ export const AGENT_SCHEMA = {
   /** Unfunded need today (food units) -> starvation. */
   deficit: 'f64',
   injuryCause: 'u8',
+  /** Who inflicted the current injury (violence), for death records. */
+  injuredBy: 'i32',
   /** Event id of the pairing that produced the current partnership. */
   pairEventId: 'i32',
   /** Event id of the injury currently affecting this agent. */
@@ -114,6 +116,10 @@ export const AGENT_SCHEMA = {
   /** EMA of food given to others / the store, and taken from the store (units/day). */
   givenEma: 'f64',
   takenEma: 'f64',
+  /** Tick of this agent's last confrontation (one per day). */
+  lastConflictTick: 'i32',
+  /** Contests won (strength legitimacy; succession by "contest winners"). */
+  contestWins: 'f64',
   /** Hunting party leader this agent joined today (-1 = none / is a leader). */
   partyLeader: 'i32',
   /** Home tile for today (set at decision time; derived from clan camp / own home). */
@@ -186,6 +192,8 @@ export class AgentStore {
     c.slot[id] = NO_ID;
     c.pairEventId[id] = NO_ID;
     c.partyLeader[id] = NO_ID;
+    c.lastConflictTick[id] = NO_ID;
+    c.injuredBy[id] = NO_ID;
     c.injuryEventId[id] = NO_ID;
     c.healthCap[id] = 1;
     c.alive[id] = 1;
@@ -215,7 +223,8 @@ export const GOAL_CARE = 3;
 export const GOAL_FOLLOW = 4;
 export const GOAL_CARRIED = 5;
 export const GOAL_SOCIALIZE = 6;
-export const GOAL_NAMES = ['rest', 'forage', 'hunt', 'care for children', 'follow caregiver', 'carried', 'socialize'];
+export const GOAL_AVENGE = 7;
+export const GOAL_NAMES = ['rest', 'forage', 'hunt', 'care for children', 'follow caregiver', 'carried', 'socialize', 'seek revenge'];
 
 /** Movement phase within a day. */
 export const PHASE_HOME = 0;

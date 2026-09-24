@@ -11,6 +11,8 @@ import type { Simulation } from '../sim';
 import { NO_ID, PHASE_HOME } from '../state/agents';
 import { ageYears, feed, reserveCapacity } from './common';
 import { onGift } from './social';
+import { confront } from './conflict';
+import { MEM_NONSHARING, witness } from './gossip';
 
 const CHUNK = 0.2;
 /** Per-agent stamp to test "already a recipient" in O(1). */
@@ -67,15 +69,23 @@ export function provisionSystem(sim: Simulation): void {
         wts.push(sim.cfg.provision.partnerWeight);
       }
       // Closest friends here (affinity above a minimum), weighted by the holder's own sharing norm.
-      if (c.clanId[h] >= 0) {
+      if (c.clanId[h] >= 0 && c.carriedFood[h] > sim.cfg.social.friendShareMinCarry) {
         const fw = sim.cfg.social.friendWeight * c.cSharing[h];
         friendIds.length = 0;
         friendAff.length = 0;
-        sim.rel.forEach(c.slot[h], sim.tick, (o, v) => {
-          if (v.aff <= sim.cfg.social.friendMinAffinity || !c.alive[o] || c.phase[o] !== PHASE_HOME || c.clanId[o] !== c.clanId[h] || stamp[o] === stampNow) return;
+        const rel = sim.rel;
+        const base = c.slot[h] * rel.cap;
+        const end = base + rel.count[c.slot[h]];
+        const minAff = sim.cfg.social.friendMinAffinity;
+        for (let e = base; e < end; e++) {
+          if (rel.aff[e] <= minAff) continue; // stored value bounds the decayed one
+          const o = rel.other[e];
+          if (!c.alive[o] || c.phase[o] !== PHASE_HOME || c.clanId[o] !== c.clanId[h] || stamp[o] === stampNow) continue;
+          const a = rel.affAt(e, sim.tick);
+          if (a <= minAff) continue;
           friendIds.push(o);
-          friendAff.push(v.aff);
-        });
+          friendAff.push(a);
+        }
         const order = friendIds.map((_, k) => k).sort((a, b) => friendAff[b] - friendAff[a] || friendIds[a] - friendIds[b]);
         for (const k of order.slice(0, sim.cfg.social.maxFriendRecipients)) {
           stamp[friendIds[k]] = stampNow;
@@ -106,6 +116,7 @@ function campStore(sim: Simulation, present: number[], holders: number[], rng: i
     const surplus = c.carriedFood[h] - sim.cfg.provision.keepReserveDays * mc.adultNeed;
     if (surplus <= 0) continue;
     const give = surplus * c.cSharing[h];
+    enforceSharingNorm(sim, h, give / surplus, surplus, present, rng);
     c.carriedFood[h] -= give;
     clan.foodStore += give;
     c.givenEma[h] += ema * give;
@@ -119,6 +130,12 @@ function campStore(sim: Simulation, present: number[], holders: number[], rng: i
   if (clan.foodStore < CHUNK) return;
   const takers = present.filter((id) => c.energy[id] < mc.eatTargetEnergy);
   rng.shuffle(takers);
+  // Soft priority for high status (a leadership effect), on top of the random order.
+  const prio = sim.cfg.leadership.storePriority;
+  if (prio > 0) {
+    const key = new Map(takers.map((id, k) => [id, k / takers.length - prio * sim.statusOf(id)]));
+    takers.sort((x, y) => key.get(x)! - key.get(y)!);
+  }
   for (const id of takers) {
     if (clan.foodStore < CHUNK) break;
     const eff = efficiency(sim, id);
@@ -128,6 +145,34 @@ function campStore(sim: Simulation, present: number[], holders: number[], rng: i
     c.takenEma[id] += ema * used;
     sim.stats.day.taken += used;
     judgeTaking(sim, id, present, rng);
+  }
+}
+
+/**
+ * Norm enforcement (§10): onlookers whose own sharing norm is clearly higher
+ * than the fraction a holder gave get angry at them (-affinity, anger,
+ * remembered and gossiped as refusing to share), and sometimes threaten them.
+ */
+function enforceSharingNorm(sim: Simulation, h: number, gaveFraction: number, surplus: number, present: number[], rng: import('../rng').Rng): void {
+  const c = sim.agents.cols;
+  const nc = sim.cfg.norms;
+  if (surplus < sim.cfg.metabolism.adultNeed) return;
+  const judges: number[] = [];
+  for (let k = 0; k < nc.witnesses; k++) {
+    const w = present[rng.int(present.length)];
+    if (w === h || judges.includes(w) || ageYears(sim, w) < sim.cfg.life.adultAgeYears) continue;
+    const shortfall = c.cSharing[w] - gaveFraction - nc.tolerance;
+    if (shortfall <= 0) continue;
+    judges.push(w);
+    sim.rel.update(c.slot[w], h, sim.tick, -nc.judgeAffinity * shortfall * 4, 0, 0, 0.01);
+    c.anger[w] = Math.min(1, c.anger[w] + nc.anger * shortfall);
+    c.angerTarget[w] = h;
+    sim.stats.day.normJudgements++;
+    if (rng.chance(nc.threatRate * shortfall * 4)) confront(sim, w, h, 'norm', shortfall, []);
+  }
+  if (judges.length > 0) {
+    const ev = sim.events.emit(sim.tick, { type: 'norm.nonsharing', causes: [], agents: [h, ...judges], clans: [c.clanId[h]], data: { gave: Math.round(gaveFraction * 100) / 100 } });
+    witness(sim, judges, MEM_NONSHARING, h, NO_ID, ev);
   }
 }
 

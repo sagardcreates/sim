@@ -26,13 +26,21 @@ export type EventType =
   | 'agent.expelled'
   | 'clan.fission'
   | 'food.freeriding'
-  | 'hunt.party_kill';
+  | 'hunt.party_kill'
+  | 'leader.changed'
+  | 'leader.challenged'
+  | 'conflict.threat'
+  | 'conflict.attack'
+  | 'food.theft'
+  | 'culture.marker_innovation'
+  | 'norm.nonsharing';
 
 /** Event types retained permanently. Everything else is micro (rolling buffer + yearly counts). */
 export const MACRO_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'sim.start', 'year.end', 'clan.founded', 'clan.dissolved', 'clan.camp_moved', 'agent.born', 'agent.died',
   'pair.formed', 'climate.drought_began', 'climate.drought_ended', 'epidemic.outbreak', 'epidemic.ended',
   'agent.left_clan', 'agent.joined_clan', 'agent.expelled', 'clan.fission',
+  'leader.changed', 'leader.challenged', 'conflict.attack',
 ]);
 
 export interface SimEvent {
@@ -45,6 +53,8 @@ export interface SimEvent {
   y?: number;
   agents?: number[];
   clans?: number[];
+  /** Body-paint markers of the agents involved (for V1.5 association learning, §10). */
+  markers?: number[];
   data?: Record<string, unknown>;
 }
 
@@ -62,6 +72,8 @@ export class EventLog {
   yearCounts = new Map<string, number>();
   yearlyAggregates: { year: number; counts: Record<string, number> }[] = [];
   private listeners: Listener[] = [];
+  /** Optional annotator run before an event is stored/published (e.g. marker tags). */
+  annotate?: (e: SimEvent) => void;
 
   constructor(microBufferSize: number) {
     this.micro = new Array(microBufferSize);
@@ -77,6 +89,7 @@ export class EventLog {
 
   emit(tick: number, input: EventInput): number {
     const e: SimEvent = { id: this.nextId++, tick, ...input };
+    this.annotate?.(e);
     if (MACRO_EVENTS.has(e.type)) {
       this.macro.set(e.id, e);
     } else {

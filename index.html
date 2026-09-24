@@ -2,65 +2,68 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Terrarium</title>
-    <style>
-      :root { color-scheme: dark; --bg: #14161a; --panel: #1e2127; --fg: #e6e2d8; --muted: #8d8a82; --accent: #d8a657; }
-      * { box-sizing: border-box; }
-      body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; height: 100vh; height: 100dvh; }
-      #stage { flex: 1; display: flex; align-items: center; justify-content: center; min-width: 0; }
-      canvas { image-rendering: pixelated; max-width: 100%; max-height: 100%; cursor: crosshair; }
-      aside { width: 300px; background: var(--panel); padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-      h1 { font-size: 14px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
-      .row { display: flex; gap: 6px; flex-wrap: wrap; }
-      button, input { background: #2a2e36; color: var(--fg); border: 1px solid #3a3f49; border-radius: 4px; padding: 4px 8px; font: inherit; }
-      button.active { border-color: var(--accent); color: var(--accent); }
-      input { width: 70px; }
-      .muted { color: var(--muted); }
-      #clans div, #legend div { display: flex; align-items: center; gap: 6px; }
-      #clans .num { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
-      .label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
-      .ticker { font-size: 11px; color: var(--muted); max-height: 220px; overflow-y: auto; }
-      select { background: #2a2e36; color: var(--fg); border: 1px solid #3a3f49; border-radius: 4px; padding: 3px 6px; font: inherit; }
-      #pop { width: 100%; height: 50px; background: #16181c; border-radius: 4px; }
-      .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-      pre { margin: 0; white-space: pre-wrap; }
-      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-      @media (max-width: 720px) {
-        body { flex-direction: column; height: auto; min-height: 100%; }
-        #stage { padding: 16px; }
-        aside { width: auto; padding: 16px; }
-      }
-    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Marcellus&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/ui/style.css" />
   </head>
   <body>
-    <div id="stage"><canvas id="view"></canvas></div>
-    <aside>
-      <h1>Terrarium</h1>
-      <div class="row">
-        <label>seed <input id="seed" type="number" value="1" /></label>
-        <button id="restart">restart</button>
-      </div>
-      <div class="row" id="speeds"></div>
-      <label>color by
-        <select id="mode">
-          <option value="activity">activity</option>
-          <option value="clan">clan</option>
-          <option value="hunger">hunger</option>
-        </select>
-      </label>
-      <div id="legend"></div>
-      <pre id="hud"></pre>
-      <div>
-        <div class="label">population</div>
-        <canvas id="pop" width="250" height="50"></canvas>
-      </div>
-      <div id="clans"></div>
-      <div class="label">person</div>
-      <pre id="inspect" class="muted"></pre>
-      <div class="label">chronicle</div>
-      <pre id="ticker" class="ticker"></pre>
-    </aside>
-    <script type="module" src="/src/debug/main.ts"></script>
+    <div id="app">
+      <header id="topbar">
+        <div class="brand">Terrarium</div>
+        <div class="group" id="speeds" role="group" aria-label="Simulation speed"></div>
+        <div class="date" id="date">—</div>
+        <div class="badges" id="badges"></div>
+        <div class="spacer"></div>
+        <div class="group" role="group" aria-label="View">
+          <button id="view-world" class="active" title="World view">World</button>
+          <button id="view-clan" title="Clan view: territories and relations">Clans</button>
+          <button id="view-follow" title="Follow the selected person">Follow</button>
+        </div>
+        <label class="seed">seed <input id="seed" type="number" value="1" min="1" /></label>
+        <button id="restart" title="Start a new world with this seed">New world</button>
+      </header>
+      <main id="stage">
+        <div id="canvas-host"></div>
+        <div id="bubble" hidden></div>
+        <div id="legend"></div>
+        <div id="chronicle-overlay" hidden>
+          <div class="label">Chronicle mode</div>
+          <p>At high speed, people are drawn as clan-colored dots. The timeline and chronicle below keep the history.</p>
+        </div>
+      </main>
+      <aside id="drawer">
+        <section id="clans-panel">
+          <h2>Clans</h2>
+          <div id="clan-list"></div>
+        </section>
+        <section id="inspector" hidden>
+          <div class="panel-head"><h2 id="insp-name">—</h2><button id="insp-close" aria-label="Close inspector">×</button></div>
+          <div id="insp-body"></div>
+        </section>
+        <section id="clan-inspector" hidden>
+          <div class="panel-head"><h2 id="clan-name">—</h2><button id="clan-close" aria-label="Close clan panel">×</button></div>
+          <div id="clan-body"></div>
+        </section>
+        <p class="hint" id="hint">Click a person to see what they are doing and why. Click a camp banner or a clan below for its story.</p>
+      </aside>
+      <footer id="bottom">
+        <div id="timeline">
+          <div class="tl-head"><span class="label">Population by clan</span><span id="tl-readout"></span></div>
+          <canvas id="stream" height="90"></canvas>
+          <div class="scrub">
+            <input id="scrub" type="range" min="0" max="0" step="10" value="0" aria-label="Jump to year" />
+            <span id="scrub-label">Jump to a saved year</span>
+          </div>
+        </div>
+        <div id="ticker-wrap">
+          <div class="label">Chronicle</div>
+          <ol id="ticker"></ol>
+        </div>
+      </footer>
+    </div>
+    <script type="module" src="/src/ui/app.ts"></script>
   </body>
 </html>

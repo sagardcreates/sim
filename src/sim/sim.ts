@@ -16,6 +16,8 @@ import { KinIndex, Pedigree } from './state/pedigree';
 import { RelationStore, type RelationSnapshot } from './state/relations';
 import { clanMembershipSystem, yearlyClanSystem } from './systems/clans';
 import { fieldEncounters, nightSocialSystem } from './systems/social';
+import { challengeSystem, deferenceDriftSystem, leadershipSystem } from './systems/leadership';
+import { cultureDivergence, cultureSystem } from './systems/culture';
 import { homeTile } from './systems/common';
 import { campSystem } from './systems/camps';
 import { climateSystem, initialClimate, type ClimateState } from './systems/climate';
@@ -33,7 +35,7 @@ import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm2.0';
+export const CODE_VERSION = 'm4.1';
 
 export interface Grave {
   id: number;
@@ -66,6 +68,18 @@ export class Simulation {
   clanMembers = new Map<number, number[]>();
   /** Today's hunting parties: leader -> joined members (derived daily). */
   parties = new Map<number, number[]>();
+  /** Derived daily: incoming deference per agent (all) and from clanmates. */
+  status: Float64Array = new Float64Array(0);
+  clanDeference: Float64Array = new Float64Array(0);
+  clanDefTotal = new Map<number, number>();
+  /** Derived leader per clan (rebuilt from clan histories on restore). */
+  leaders = new Map<number, number>();
+  /** Last challenge event per clan (cause for leader changes); derived bookkeeping. */
+  lastChallenge = new Map<number, number>();
+  /** Death event id per agent who held deference (cause for leader changes). */
+  deathEvent = new Map<number, number>();
+  /** Separate spatial index for conflicts (may run inside encounter queries). */
+  spatialConflict: SpatialHash;
   /** Yearly derived clan-to-clan relation (mean member affinity), for historian/visuals. */
   clanRelations = new Map<string, number>();
   /** Read-only hook fired after every movement sub-step (render interpolation). */
@@ -76,12 +90,19 @@ export class Simulation {
     // Terrain uses its own stream so it's identical for any population/behavior config.
     this.world = generateWorld(cfg, this.rng.get('terrain'));
     this.events = new EventLog(cfg.history.microBufferSize);
+    // Tag events with the body-paint markers of those involved (§10, for V1.5).
+    this.events.annotate = (e) => {
+      if (!e.agents || e.agents.length === 0) return;
+      const c = this.agents.cols;
+      e.markers = [...new Set(e.agents.filter((a) => a >= 0 && a < this.agents.count).map((a) => c.cMarker[a]))];
+    };
     this.mind = new MindStore(cfg.memory.placeCap, cfg.movement.maxPathLength);
     this.rel = new RelationStore(cfg.relations.cap, cfg.relations.decay);
     this.pedigree = new Pedigree(this.agents);
     this.kin = new KinIndex(this.agents, this.pedigree);
     this.fields = new FlowFields(this.world, cfg.world.impassableCost, cfg.movement.fieldRadiusCost, cfg.movement.fieldCacheSize);
     this.spatial = new SpatialHash(this.world.width, this.world.height, 4);
+    this.spatialConflict = new SpatialHash(this.world.width, this.world.height, 4);
   }
 
   static create(seed: number, cfg: SimConfig = makeConfig()): Simulation {
@@ -128,23 +149,23 @@ export class Simulation {
     return this.kin.r(a, b);
   }
 
-  /** Status = deference received (derived). Deference arrives in M3. */
+  /** Status = share of the clan's deference this agent receives (derived daily). */
   statusOf(id: number): number {
-    void id;
-    return 0;
+    const c = this.agents.cols;
+    const total = this.clanDefTotal.get(c.clanId[id]) ?? 0;
+    return total > 0 && id < this.clanDeference.length ? this.clanDeference[id] / total : 0;
   }
 
-  /** Weight of an agent's voice in collective choices (deference-based from M3). */
+  /** Weight of an agent's voice in collective choices: 1 + influenceWeight x status share. */
   influence(id: number): number {
-    void id;
-    return 1;
+    return 1 + this.cfg.leadership.influenceWeight * this.statusOf(id);
   }
 
-  /** How much agent i defers to clan k's leadership (M3). */
+  /** How much agent i defers to clan k's (derived) leader. */
   deferenceToLeadership(i: number, k: number): number {
-    void i;
-    void k;
-    return 0;
+    const L = this.leaders.get(k);
+    if (L === undefined || L === i) return 0;
+    return this.rel.get(this.agents.cols.slot[i], L, this.tick)?.def ?? 0;
   }
 
   /** How highly y regards x: deference if any (M3), else affinity. */
@@ -163,6 +184,17 @@ export class Simulation {
       .sort((a, b) => b.s - a.s || b.age - a.age || a.id - b.id)
       .slice(0, n)
       .map((x) => x.id);
+  }
+
+  /** Upper bound on any of `id`'s grudges (stored values only grow stale downward). */
+  maxStoredGrudge(id: number): number {
+    const rel = this.rel;
+    const slot = this.agents.cols.slot[id];
+    const base = slot * rel.cap;
+    const end = base + rel.count[slot];
+    let m = 0;
+    for (let e = base; e < end; e++) if (rel.grudge[e] > m) m = rel.grudge[e];
+    return m;
   }
 
   homeTileOf(id: number): number {
@@ -188,6 +220,7 @@ export class Simulation {
     metabolismSystem(this);
     // Perception happens where agents work (movement sub-steps) and from memory.
     this.rebuildDerived();
+    if (this.tick % this.cfg.leadership.derivePeriodDays === 0) leadershipSystem(this);
     decisionSystem(this);
     const orderRng = this.rng.get('order');
     const moveRng = this.rng.get('movement');
@@ -207,6 +240,9 @@ export class Simulation {
     this.rebuildDerived();
     campSystem(this);
     clanMembershipSystem(this);
+    deferenceDriftSystem(this);
+    challengeSystem(this);
+    cultureSystem(this);
     this.checkDissolution();
     this.tick++;
     if (this.dayOfYear === 0) {
@@ -263,6 +299,11 @@ export class Simulation {
       drought: Math.round(this.climate.drought * 1000) / 1000,
       clans: this.clans.extant().map((cl) => ({ id: cl.id, size: this.clanMembers.get(cl.id)?.length ?? 0 })),
       loners: this.clanMembers.get(-1)?.length ?? 0,
+      leaders: this.leaders.size,
+      ...(() => {
+        const dv = cultureDivergence(this);
+        return { cultureFst: Math.round(dv.functional * 10000) / 10000, markerDivergence: Math.round(dv.marker * 10000) / 10000 };
+      })(),
     });
     this.events.emit(this.tick, { type: 'year.end', causes: [], data: { year, population: this.agents.living.length } });
     this.events.closeYear(year);
@@ -270,7 +311,50 @@ export class Simulation {
 
   /** Extra per-run metrics used by acceptance reports (grows with milestones). */
   acceptanceMetrics(): Record<string, number> {
-    return {};
+    const tenures = this.leaderTenures();
+    const years = tenures.map((t) => t.years).sort((a, b) => a - b);
+    const mean = years.length ? years.reduce((a, b) => a + b, 0) / years.length : 0;
+    const sd = years.length ? Math.sqrt(years.reduce((a, b) => a + (b - mean) ** 2, 0) / years.length) : 0;
+    return {
+      tenures: years.length,
+      tenureMean: mean,
+      tenureMedian: years.length ? years[Math.floor(years.length / 2)] : 0,
+      tenureMax: years.length ? years[years.length - 1] : 0,
+      tenureCV: mean > 0 ? sd / mean : 0,
+      leaderYearsShare: this.stats.years.length
+        ? this.stats.years.reduce((a, y) => a + y.leaders / Math.max(1, y.clans.filter((c) => c.size > 0).length), 0) / this.stats.years.length : 0,
+      cultureFstStart: this.stats.years[0]?.cultureFst ?? 0,
+      cultureFstEnd: this.stats.years[this.stats.years.length - 1]?.cultureFst ?? 0,
+      markerDivStart: this.stats.years[0]?.markerDivergence ?? 0,
+      markerDivEnd: this.stats.years[this.stats.years.length - 1]?.markerDivergence ?? 0,
+      cultureFstMean: this.stats.years.length ? this.stats.years.reduce((a, y) => a + y.cultureFst, 0) / this.stats.years.length : 0,
+      markerDivMean: this.stats.years.length ? this.stats.years.reduce((a, y) => a + y.markerDivergence, 0) / this.stats.years.length : 0,
+      threats: this.stats.years.reduce((a, y) => a + y.threats, 0),
+      attacks: this.stats.years.reduce((a, y) => a + y.attacks, 0),
+      killings: this.stats.years.reduce((a, y) => a + y.killings, 0),
+    };
+  }
+
+  /** Leader tenures (years) from leader.changed records; tenures still running at the end are included. */
+  leaderTenures(): { clan: number; leader: number; start: number; end: number; years: number }[] {
+    const out: { clan: number; leader: number; start: number; end: number; years: number }[] = [];
+    const dpy = this.cfg.time.daysPerYear;
+    for (const clan of this.clans.clans.values()) {
+      let cur = -1;
+      let since = 0;
+      const close = (end: number) => {
+        if (cur >= 0) out.push({ clan: clan.id, leader: cur, start: since, end, years: (end - since) / dpy });
+      };
+      for (const id of clan.history) {
+        const e = this.events.macro.get(id);
+        if (e?.type !== 'leader.changed') continue;
+        close(e.tick);
+        cur = (e.data as { leader: number }).leader;
+        since = e.tick;
+      }
+      close(clan.dissolvedTick >= 0 ? clan.dissolvedTick : this.tick);
+    }
+    return out;
   }
 
   run(days: number): void {
@@ -290,6 +374,10 @@ export class Simulation {
     h.string(stableStringify([...this.clans.clans.values()]));
     h.typed(this.world.plantFood).typed(this.world.gameDensity);
     h.string(stableStringify(this.climate));
+    // Exactly one status entry per agent (arrays may be over-allocated differently after a restore).
+    const st = new Float64Array(this.agents.count);
+    st.set(this.status.subarray(0, Math.min(this.status.length, this.agents.count)));
+    h.typed(st);
     h.string(stableStringify(this.graves));
     h.string(stableStringify(this.rng.getState()));
     h.number(this.events.nextId);
@@ -316,6 +404,11 @@ export class Simulation {
       graves: deepClone(this.graves),
       rng: this.rng.getState(),
       stats: { day: deepClone(this.stats.day), years: deepClone(this.stats.years) },
+      statusCache: {
+        status: Array.from(this.status.subarray(0, this.agents.count)),
+        clanDeference: Array.from(this.clanDeference.subarray(0, this.agents.count)),
+        clanDefTotal: [...this.clanDefTotal.entries()],
+      },
       events: {
         nextId: this.events.nextId,
         macro: [...this.events.macro.values()],
@@ -360,6 +453,24 @@ export class Simulation {
     for (const [k, v] of Object.entries(snap.events.yearCounts)) sim.events.yearCounts.set(k, v);
     sim.events.yearlyAggregates = deepClone(snap.events.yearlyAggregates);
     sim.rebuildDerived();
+    // Derived leaders: the last leader.changed record in each clan's history.
+    for (const clan of sim.clans.clans.values()) {
+      for (let k = clan.history.length - 1; k >= 0; k--) {
+        const e = sim.events.macro.get(clan.history[k]);
+        if (e?.type !== 'leader.changed') continue;
+        const L = (e.data as { leader: number }).leader;
+        if (L >= 0) sim.leaders.set(clan.id, L);
+        break;
+      }
+    }
+    for (const e of sim.events.macro.values()) {
+      if (e.type === 'leader.challenged') sim.lastChallenge.set(e.clans![0], e.id);
+      if (e.type === 'agent.died') sim.deathEvent.set(e.agents![0], e.id);
+    }
+    // Status is derived periodically (not every day), so its cached values are part of the snapshot.
+    sim.status = Float64Array.from(snap.statusCache.status);
+    sim.clanDeference = Float64Array.from(snap.statusCache.clanDeference);
+    for (const [k, v] of snap.statusCache.clanDefTotal) sim.clanDefTotal.set(k, v);
     return sim;
   }
 }
@@ -379,6 +490,7 @@ export interface SimSnapshot {
   graves: Grave[];
   rng: Record<string, RngState>;
   stats: { day: DayCounters; years: YearStats[] };
+  statusCache: { status: number[]; clanDeference: number[]; clanDefTotal: [number, number][] };
   events: {
     nextId: number;
     macro: SimEvent[];

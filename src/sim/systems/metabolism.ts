@@ -51,7 +51,10 @@ export function metabolismSystem(sim: Simulation): void {
     c.condition[id] += (c.energy[id] - c.condition[id]) / mc.conditionTauDays;
     if (c.health[id] > c.healthCap[id]) c.health[id] = c.healthCap[id];
     c.injury[id] = Math.max(0, c.injury[id] - mc.injuryHeal);
-    if (c.injury[id] === 0) c.injuryEventId[id] = NO_ID;
+    if (c.injury[id] === 0) {
+      c.injuryEventId[id] = NO_ID;
+      c.injuredBy[id] = NO_ID;
+    }
     if (tick - c.lastWaterTick[id] > mc.thirstDays) c.health[id] -= mc.thirstHealthLoss;
     if (age > sim.cfg.skills.skillDecayAfterYears) c.foragingSkill[id] = Math.max(0, c.foragingSkill[id] - sim.cfg.skills.skillDecayRate);
     c.fear[id] *= 0.8;

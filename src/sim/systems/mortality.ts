@@ -12,6 +12,7 @@ import {
   GOAL_CARE, GOAL_REST, GOAL_SOCIALIZE, NO_ID, PHASE_HOME,
 } from '../state/agents';
 import { ageYears, isAlive } from './common';
+import { redistributeDeference } from './leadership';
 
 export function mortalitySystem(sim: Simulation): void {
   const c = sim.agents.cols;
@@ -53,11 +54,12 @@ export function mortalitySystem(sim: Simulation): void {
     } else if ((r -= hEpi) < 0) cause = CAUSE_EPIDEMIC;
     else cause = CAUSE_NEGLECT;
     const factors: string[] = [];
+    const killer = cause === 7 /* CAUSE_VIOLENCE */ ? c.injuredBy[id] : NO_ID;
     const share = (v: number) => v / total > 0.2;
     if (cause !== CAUSE_STARVATION && share(hHealth)) factors.push('poor health');
     if (cause !== CAUSE_INJURY && share(hInjury)) factors.push('injury');
     if (cause !== CAUSE_EPIDEMIC && share(hEpi)) factors.push('epidemic');
-    killAgent(sim, id, cause, causes, factors);
+    killAgent(sim, id, cause, causes, factors, killer);
   }
 }
 
@@ -137,5 +139,8 @@ export function killAgent(sim: Simulation, id: number, cause: number, causes: nu
     },
   });
   sim.stats.day.deaths[cause]++;
+  sim.deathEvent.set(id, ev);
+  // Succession / redistribution of deference the deceased held.
+  if (id < sim.clanDeference.length && sim.clanDeference[id] > 0) redistributeDeference(sim, id);
   return ev;
 }

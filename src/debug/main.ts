@@ -7,8 +7,8 @@ import { ATTR_STRIDE, type DayMsg, type FromWorker, type ToWorker, type WorldMsg
 const SCALE = 8;
 const BIOME_COLORS = ['#8fae5d', '#4f7a3a', '#9a8b6a', '#c8b77a', '#3f6f9a'];
 const CLAN_COLORS = ['#e06c5a', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#98c379', '#d19a66', '#f0f0f0', '#ff9df0', '#9dffcb'];
-const GOAL_COLORS = ['#b8b8b8', '#7fd36b', '#ff6b5b', '#f2c14e', '#6bc6ff', '#ffffff'];
-const GOAL_LABELS = ['resting', 'foraging', 'hunting', 'caring for children', 'following caregiver', 'carried infant'];
+const GOAL_COLORS = ['#b8b8b8', '#7fd36b', '#ff6b5b', '#f2c14e', '#6bc6ff', '#ffffff', '#d58cff', '#ff2020'];
+const GOAL_LABELS = ['resting', 'foraging', 'hunting', 'caring for children', 'following caregiver', 'carried infant', 'socializing', 'seeking revenge'];
 const SPEEDS: [string, number][] = [
   ['pause', 0], ['1x', 1 / 15], ['10x', 10 / 15], ['100x', 100 / 15], ['max', Infinity],
 ];
@@ -96,8 +96,11 @@ function wire(seed: number): void {
       world = m;
       buildTerrain(m);
     } else if (m.type === 'inspect') {
-      if (m.id === selectedId) inspectEl.textContent = m.lines.join('\n');
-    } else {
+      if (m.id === selectedId) {
+        const why = m.why.map((w) => `${w.label} (${w.value >= 0 ? '+' : ''}${w.value.toFixed(2)})`).join(', ');
+        inspectEl.textContent = [m.name, ...m.lines, m.goal ? `doing: ${m.goal}` : '', why ? `because: ${why}` : ''].filter(Boolean).join('\n');
+      }
+    } else if (m.type === 'day') {
       cur = m;
       dayArrivedAt = performance.now();
       if (m.tick - lastPopTick >= 30 || lastPopTick < 0) {

@@ -9,7 +9,7 @@
  */
 import type { Simulation } from '../sim';
 import {
-  GOAL_CARE, GOAL_CARRIED, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, GOAL_REST, GOAL_SOCIALIZE, NO_ID,
+  GOAL_AVENGE, GOAL_CARE, GOAL_CARRIED, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, GOAL_REST, GOAL_SOCIALIZE, NO_ID,
   PHASE_HOME, PHASE_OUT, PHASE_RETURN, REP_LACTATING, REP_PREGNANT,
 } from '../state/agents';
 import { feltAffinity } from './social';
@@ -23,11 +23,12 @@ export const WHY_LABELS = [
   'bold', 'sticking with plan', 'effort of the trip', 'learning from a caregiver', 'exploring',
   'carrying an infant', 'too young to forage', 'nursing', 'cautious',
   'sociable', 'looking for a partner', 'joining a hunting party', 'hunting together pays more',
+  'grudge', 'anger', 'afraid',
 ];
 const T_HUNGRY = 1, T_DEPS = 2, T_SPOT = 3, T_HUNTREC = 4, T_RISK = 5, T_UNWELL = 6, T_INJURED = 7,
   T_PREG = 8, T_KIDS = 9, T_FED = 10, T_BOLD = 11, T_PLAN = 12, T_EFFORT = 13, T_LEARN = 14, T_EXPLORE = 15,
   T_INFANT = 16, T_YOUNG = 17, T_NURSING = 18, T_CAUTIOUS = 19, T_SOCIABLE = 20, T_COURT = 21, T_PARTY = 22,
-  T_SYNERGY = 23;
+  T_SYNERGY = 23, T_GRUDGE = 24, T_ANGER = 25, T_AFRAID = 26;
 
 /** Scratch buffers for scoring (no per-decision allocation). */
 const MAX_OPT = 8;
@@ -236,6 +237,16 @@ function decideAdult(sim: Simulation, id: number, rng: import('../rng').Rng): vo
   term(T_SOCIABLE, (sc.socializeBase + sc.socializeSociability * c.sociability[id]) * (1 - h));
   term(T_COURT, single ? sc.courtWeight * (1 - h) : 0);
 
+  // --- Seek revenge (multi-day goal: lurk near the wrongdoer's camp) ---
+  const av = avengeTarget(sim, id, field);
+  if (av.tile >= 0) {
+    beginOption(GOAL_AVENGE, av.tile);
+    term(T_GRUDGE, sim.cfg.conflict.avengeWeight * av.grudge * (0.5 * c.cViolence[id] + 0.5 * bold));
+    term(T_ANGER, c.angerTarget[id] === av.target ? 0.5 * c.anger[id] : 0);
+    term(T_AFRAID, -0.5 * c.fear[id]);
+    term(T_HUNGRY, -h * 0.5);
+  }
+
   // Hysteresis: stick with yesterday's plan unless in an emergency.
   if (e > dc.emergencyEnergy) {
     for (let k = 0; k < nOpt; k++) {
@@ -252,7 +263,7 @@ function decideAdult(sim: Simulation, id: number, rng: import('../rng').Rng): vo
   c.goal[id] = goal;
   c.goalUntilTick[id] = tick + 1;
   storeWhy(sim, slot, pick);
-  if (goal === GOAL_FORAGE || goal === GOAL_HUNT) startTrip(sim, id, optTarget[pick], field);
+  if (goal === GOAL_FORAGE || goal === GOAL_HUNT || goal === GOAL_AVENGE) startTrip(sim, id, optTarget[pick], field);
   else setHome(sim, id);
 }
 
@@ -476,4 +487,50 @@ function formParties(sim: Simulation, adults: number[], rng: import('../rng').Rn
     c.targetTile[id] = c.targetTile[L];
     sim.mind.setWhy(c.slot[id], GOAL_HUNT, [T_PARTY, T_SYNERGY], [vals[k], vals[k] - vals[0]]);
   }
+}
+
+/**
+ * Strongest grudge target whose home is within a day trip: returns a tile a
+ * little outside their camp (lurking there, not walking into it).
+ */
+function avengeTarget(sim: Simulation, id: number, field: Float64Array): { target: number; grudge: number; tile: number } {
+  const c = sim.agents.cols;
+  const k = sim.cfg.conflict;
+  let target = NO_ID;
+  let grudge = 0;
+  const rel = sim.rel;
+  const base = c.slot[id] * rel.cap;
+  const end = base + rel.count[c.slot[id]];
+  for (let e = base; e < end; e++) {
+    if (rel.grudge[e] < k.avengeMinGrudge) continue; // stored value bounds the decayed one
+    const g = rel.grudgeAt(e, sim.tick);
+    const o = rel.other[e];
+    if (g > grudge && g >= k.avengeMinGrudge && c.alive[o] && c.clanId[o] !== c.clanId[id]) {
+      grudge = g;
+      target = o;
+    }
+  }
+  if (target === NO_ID) return { target, grudge: 0, tile: -1 };
+  const W = sim.world.width;
+  const home = sim.homeTileOf(target);
+  const hx = home % W;
+  const hy = (home / W) | 0;
+  const max = maxTripCost(sim);
+  // Nearest reachable tile on a ring 3 tiles out from the target's camp.
+  let best = -1;
+  let bestD = Infinity;
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== 3) continue;
+      const x = hx + dx;
+      const y = hy + dy;
+      if (x < 0 || y < 0 || x >= W || y >= sim.world.height) continue;
+      const t = y * W + x;
+      if (field[t] > 0 && field[t] <= max && field[t] < bestD) {
+        bestD = field[t];
+        best = t;
+      }
+    }
+  }
+  return { target, grudge, tile: best };
 }
