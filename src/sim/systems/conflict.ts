@@ -180,7 +180,7 @@ function nearby(sim: Simulation, x: number): number[] {
  * affinity to the victim) and in clanmates who witness it. Anger targets the
  * killer. Grief in kin.
  */
-function onKilling(sim: Simulation, killer: number, victim: number, deathEv: number): void {
+export function onKilling(sim: Simulation, killer: number, victim: number, deathEv: number): void {
   const c = sim.agents.cols;
   const k = sim.cfg.conflict;
   const t = sim.tick;

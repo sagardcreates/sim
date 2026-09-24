@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeConfig } from '../src/sim/config';
 import { Simulation } from '../src/sim/sim';
-import { CAUSE_VIOLENCE, NO_ID } from '../src/sim/state/agents';
+import { CAUSE_VIOLENCE } from '../src/sim/state/agents';
 import { computeStatus, leadershipSystem } from '../src/sim/systems/leadership';
 import { killAgent } from '../src/sim/systems/mortality';
 
@@ -43,28 +43,40 @@ describe('leadership (derived from deference)', () => {
 });
 
 describe('violence', () => {
-  it('records killings with killer and cause, and creates grudges in the victim\'s kin', () => {
+  it("records killings with killer and cause, and creates grudges in the victim's kin", () => {
     // A deliberately violent world: cheap escalation, frequent contests.
     const cfg = makeConfig({
-      conflict: { levelCost: [0, 0.2, 0.6, 1.0], foodContestRate: 1, foodContestScarcity: 1, foodContestMinHunger: 0, theftRate: 0.3 },
+      conflict: { levelCost: [0, 0.6, 1.4, 2.2], foodContestRate: 1, foodContestScarcity: 1, foodContestMinHunger: 0, theftRate: 0.2 },
     });
     const sim = Simulation.create(8, cfg);
-    sim.run(3 * 365);
     const c = sim.agents.cols;
-    const killed: number[] = [];
-    for (let id = 0; id < sim.agents.count; id++) if (!c.alive[id] && c.deathCause[id] === CAUSE_VIOLENCE) killed.push(id);
-    expect(killed.length).toBeGreaterThan(0);
-    for (const v of killed) expect(c.killerId[v]).not.toBe(NO_ID);
-    // Some living kin of some victim holds a grudge toward the killer.
-    let found = false;
-    for (const v of killed) {
-      const killer = c.killerId[v];
-      for (const k of sim.kin.kinOf(v)) {
-        if (!c.alive[k] || !c.alive[killer]) continue;
-        const g = sim.rel.get(c.slot[k], killer, sim.tick)?.grudge ?? 0;
-        if (g > 0) found = true;
+    const pending: [number, number][] = [];
+    let killings = 0;
+    let checked = 0;
+    let withGrudge = 0;
+    sim.events.subscribe((e) => {
+      if (e.type !== 'agent.died' || (e.data as { cause: string }).cause !== 'violence') return;
+      const victim = e.agents![0];
+      const killer = (e.data as { killer?: number }).killer;
+      killings++;
+      expect(killer).toBeDefined();
+      expect(c.killerId[victim]).toBe(killer);
+      pending.push([victim, killer!]);
+    });
+    for (let d = 0; d < 2 * 365; d++) {
+      sim.step();
+      // Consequences are applied right after the death record; check them the same day.
+      for (const [victim, killer] of pending.splice(0)) {
+        for (const k of sim.kin.kinOf(victim)) {
+          if (!c.alive[k] || k === killer) continue;
+          checked++;
+          if ((sim.rel.get(c.slot[k], killer, sim.tick)?.grudge ?? 0) > 0) withGrudge++;
+        }
       }
     }
-    expect(found).toBe(true);
+    expect(killings).toBeGreaterThan(0);
+    expect(checked).toBeGreaterThan(0);
+    expect(withGrudge / checked).toBeGreaterThan(0.5);
+    expect(CAUSE_VIOLENCE).toBe(7);
   });
 });

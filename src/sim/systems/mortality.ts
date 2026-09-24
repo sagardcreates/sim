@@ -13,6 +13,7 @@ import {
 } from '../state/agents';
 import { ageYears, isAlive } from './common';
 import { redistributeDeference } from './leadership';
+import { onKilling } from './conflict';
 
 export function mortalitySystem(sim: Simulation): void {
   const c = sim.agents.cols;
@@ -59,7 +60,12 @@ export function mortalitySystem(sim: Simulation): void {
     if (cause !== CAUSE_STARVATION && share(hHealth)) factors.push('poor health');
     if (cause !== CAUSE_INJURY && share(hInjury)) factors.push('injury');
     if (cause !== CAUSE_EPIDEMIC && share(hEpi)) factors.push('epidemic');
-    killAgent(sim, id, cause, causes, factors, killer);
+    const deathEv = killAgent(sim, id, cause, causes, factors, killer);
+    // Dying later of wounds is still a killing: kin and witnesses react the same way.
+    if (killer !== NO_ID && sim.agents.cols.alive[killer]) {
+      sim.spatialConflict.build(sim.agents.living, c.x, c.y);
+      onKilling(sim, killer, id, deathEv);
+    }
   }
 }
 
