@@ -11,9 +11,9 @@
  */
 import type { Simulation } from '../sim';
 import {
-  CAUSE_VIOLENCE, GOAL_REST, NO_ID, PHASE_HOME, SEX_FEMALE, SEX_MALE, AGENT_FIELDS,
+  CAUSE_VIOLENCE, GOAL_REST, NO_ID, PHASE_HOME, PHASE_RETURN, SEX_FEMALE, SEX_MALE, AGENT_FIELDS,
 } from '../state/agents';
-import { ageYears, clamp01, feed, isAlive, strength } from '../systems/common';
+import { ageYears, clamp01, feed, isAlive, spend, strength } from '../systems/common';
 import { clanValue, LONER, moveClan } from '../systems/clans';
 import { onGift } from '../systems/social';
 import { killAgent } from '../systems/mortality';
@@ -21,6 +21,7 @@ import { onKilling } from '../systems/conflict';
 import { makeClanName, makePersonName, makeSyllableSet } from '../names';
 import { animalsOnTile, ANIMALS, huntChance } from './animals';
 import { nearestCampSite } from '../systems/camps';
+import { attraction, formPair } from '../systems/reproduction';
 
 export type HelpVerb = 'talk' | 'give' | 'tend' | 'back';
 
@@ -40,7 +41,13 @@ export type PlayerAction =
   | { kind: 'wood' }
   /** Leave carried food and wood at your camp. */
   | { kind: 'deposit' }
-  | { kind: 'build' };
+  | { kind: 'build' }
+  /** Ask someone to walk with you a while (a companion: away from watching eyes). */
+  | { kind: 'walk'; target: number; witnesses: number[] }
+  | { kind: 'dismiss'; target: number }
+  /** Courtship and marriage (either sex; opposite-sex pairs, as in the sim's pairing). */
+  | { kind: 'court'; target: number; witnesses: number[] }
+  | { kind: 'propose'; target: number; witnesses: number[] };
 
 export interface PlayerSkills {
   hunt: number;
@@ -77,6 +84,12 @@ export interface PlayerState {
   woodToday: number;
   /** Tick the per-day counters belong to. */
   effortTick: number;
+  /** Reputation for generosity, healing and prowess (0..1): opens doors and draws people to you. */
+  renown: number;
+  /** target id -> courtship (0..1). */
+  courtship: Record<string, number>;
+  /** tile -> [trees felled, tick of the last felling]; trees regrow. */
+  felled: Record<string, [number, number]>;
   /** Actions with the tick and sub-step (-1 = before the day began) they were applied at. */
   log: { tick: number; sub: number; a: PlayerAction }[];
 }
@@ -152,6 +165,18 @@ function apply(sim: Simulation, p: PlayerState, a: PlayerAction): ActionResult {
     }
     case 'hail':
       return hail(sim, p, a.target);
+    case 'walk':
+      return walkWith(sim, p, a.target, a.witnesses);
+    case 'dismiss': {
+      const c2 = sim.agents.cols;
+      if (!isAlive(sim, a.target)) return { ok: false, text: 'They are gone.' };
+      c2.escortUntil[a.target] = 0;
+      return { ok: true, text: `${sim.agents.displayName(a.target)} heads back.` };
+    }
+    case 'court':
+      return court(sim, p, a.target, a.witnesses);
+    case 'propose':
+      return propose(sim, p, a.target, a.witnesses);
     case 'hunt':
       return huntAnimal(sim, p, a.tile, a.k);
     case 'wood': {
@@ -160,11 +185,14 @@ function apply(sim: Simulation, p: PlayerState, a: PlayerAction): ActionResult {
       const t = Math.floor(c.y[me]) * sim.world.width + Math.floor(c.x[me]);
       if (sim.world.biome[t] !== 1) return { ok: false, text: 'There are no good trees here. Find a forest.' };
       if (p.wood >= pc.woodCarry) return { ok: false, text: 'You cannot carry more wood.' };
+      const f = p.felled[t] ?? [0, 0];
+      if (f[0] >= pc.treesPerTile) return { ok: false, text: 'You have felled every tree here. Move to standing trees.' };
+      p.felled[t] = [f[0] + 1, sim.tick];
       const got = Math.min(pc.woodCarry - p.wood, pc.woodPerAction * (0.6 + p.skills.wood));
       p.wood += got;
       p.woodToday++;
       p.skills.wood = Math.min(1, p.skills.wood + pc.skillGain * 0.5 * (1 - p.skills.wood));
-      return { ok: true, text: `You cut ${got.toFixed(1)} wood.` };
+      return { ok: true, text: `The tree comes down: ${got.toFixed(1)} wood.` };
     }
     case 'deposit': {
       const clan = sim.clans.get(p.clanId)!;
@@ -253,7 +281,7 @@ function spawnPlayer(sim: Simulation, name: string, female: boolean): ActionResu
     id, clanId: clan.id, suspicion: {}, raidTarget: -1, lastRaidTick: -1_000_000, gathersToday: 0, gatherTick: -1,
     refusedAt: {}, lastHelp: {}, caught: 0, raidsWon: 0, raidsLost: 0,
     skills: { hunt: pc.startSkill, gather: pc.startSkill, wood: pc.startSkill }, hunger: 0, wood: 0, campWood: 0, shelters: 0,
-    huntsToday: 0, woodToday: 0, effortTick: -1, log: [],
+    huntsToday: 0, woodToday: 0, effortTick: -1, renown: 0, courtship: {}, felled: {}, log: [],
   };
   clan.founding.founderId = id;
   clan.founding.eventId = sim.events.emit(sim.tick, {
@@ -354,12 +382,13 @@ function hail(sim: Simulation, p: PlayerState, t: number): ActionResult {
   if (sim.nextSubStep < 0 || sim.nextSubStep >= S) return { ok: false, text: 'It is night; people are by their fires.' };
   const v = sim.rel.get(c.slot[t], p.id, sim.tick);
   if ((v?.grudge ?? 0) > 0.3 || (v?.aff ?? 0) < -0.3) return { ok: false, text: `${name} glares at you and walks on.` };
-  const friendly = (v?.aff ?? 0) > 0.3;
-  const hold = friendly ? pc.hailHoldFriend : pc.hailHoldStranger;
+  const friendly = (v?.aff ?? 0) > 0.3 || p.renown > 0.4;
   const now = sim.tick * S + sim.nextSubStep;
-  c.heldUntil[t] = Math.max(c.heldUntil[t], now + hold);
+  // They walk over (movePlayerBound), then wait a while.
+  c.comeUntil[t] = now + pc.comeSubSteps;
+  c.heldUntil[t] = 0;
   sim.rel.update(c.slot[t], p.id, sim.tick, 0, 0, 0, 0.03);
-  return { ok: true, text: friendly ? `${name} smiles and waits for you.` : `${name} stops and eyes you, waiting.` };
+  return { ok: true, text: friendly ? `${name} waves and comes over.` : `${name} hesitates, then comes over to see what you want.` };
 }
 
 /** Keeps someone you are dealing with from walking off mid-conversation. */
@@ -392,6 +421,9 @@ function huntAnimal(sim: Simulation, p: PlayerState, tile: number, k: number): A
     return { ok: true, text: `The ${kind.name} escapes.${hurt}` };
   }
   w.gameDensity[tile] *= 1 - kind.depletion;
+  if (kind.req >= 0.45) p.renown = Math.min(1, p.renown + pc.renownBigKill);
+  const W = w.width;
+  sim.events.emit(sim.tick, { type: 'player.kill', causes: [], agents: [p.id], x: (tile % W) + 0.5, y: Math.floor(tile / W) + 0.5, data: { kind: kinds[k], tile, k } });
   const room = pc.carryCapacity - c.carriedFood[p.id];
   const got = Math.min(kind.food, room);
   c.carriedFood[p.id] += got;
@@ -486,6 +518,7 @@ function help(sim: Simulation, p: PlayerState, verb: HelpVerb, t: number, witnes
     const ate = feed(sim, t, units);
     c.carriedFood[t] += units - ate;
     onGift(sim, me, t, units, before);
+    if (before < 0.45) p.renown = Math.min(1, p.renown + pc.renownGift);
     text = before < 0.45 ? `${name} takes the food gratefully.` : `${name} accepts the food.`;
   } else if (verb === 'tend') {
     if (!needsTending(sim, t)) return { ok: false, text: `${name} does not need tending.` };
@@ -494,6 +527,7 @@ function help(sim: Simulation, p: PlayerState, verb: HelpVerb, t: number, witnes
     c.injury[t] = Math.max(0, c.injury[t] - pc.tendInjuryHeal);
     c.health[t] = Math.min(c.healthCap[t], c.health[t] + pc.tendHealthHeal);
     sim.rel.update(c.slot[t], me, sim.tick, pc.tendAffinity * (0.5 + need), 0.05, 0, 0.1);
+    p.renown = Math.min(1, p.renown + pc.renownTend);
     text = `You tend ${name}.`;
   } else if (verb === 'back') {
     const g = topGrudge(sim, t);
@@ -514,7 +548,7 @@ function help(sim: Simulation, p: PlayerState, verb: HelpVerb, t: number, witnes
  * Witnesses from the target's clan grow suspicious of the stranger courting
  * their people: a lot if the leader sees it, little if they like the player.
  */
-function observe(sim: Simulation, p: PlayerState, target: number, verb: HelpVerb | 'invite', witnesses: number[]): ActionResult['seenBy'] {
+function observe(sim: Simulation, p: PlayerState, target: number, verb: HelpVerb | 'invite' | 'walk' | 'court' | 'propose', witnesses: number[]): ActionResult['seenBy'] {
   const c = sim.agents.cols;
   const pc = sim.cfg.play;
   const clan = c.clanId[target];
@@ -565,7 +599,8 @@ export function inviteOdds(sim: Simulation, t: number): InviteOdds {
   const v = sim.rel.get(c.slot[t], pl.id, sim.tick);
   const regard = pc.inviteAffinityWeight * Math.max(0, v?.aff ?? 0) + pc.inviteDeferenceWeight * (v?.def ?? 0) - 2 * (v?.grudge ?? 0);
   const shelter = pc.shelterInviteBonus * pl.shelters;
-  const z = regard + vYou + food + shelter - vOwn - cc.switchMargin;
+  const renown = pc.renownInviteWeight * pl.renown;
+  const z = regard + vYou + food + shelter + renown - vOwn - cc.switchMargin;
   const p = 1 / (1 + Math.exp(-z / pc.inviteTemperature));
   return {
     p,
@@ -574,6 +609,7 @@ export function inviteOdds(sim: Simulation, t: number): InviteOdds {
       { label: 'ties to your people', value: vYou },
       { label: 'food in your camp', value: food },
       { label: 'shelters at your camp', value: shelter },
+      { label: 'your renown', value: renown },
       { label: own === LONER ? 'life alone' : `ties to ${sim.clans.get(own)?.name ?? 'their clan'}`, value: -vOwn },
       { label: 'reluctance to move', value: -cc.switchMargin },
     ],
@@ -662,6 +698,8 @@ export function playerSystem(sim: Simulation): void {
   const pc = sim.cfg.play;
   const rng = sim.rng.get('player');
   eatAndRest(sim, p);
+  p.renown = Math.max(0, p.renown - pc.renownDecayPerDay);
+  for (const key of Object.keys(p.felled)) if (sim.tick - p.felled[key][1] > pc.treeRegrowDays) delete p.felled[key];
   if (p.raidTarget >= 0) resolveRaid(sim, p, p.raidTarget, rng);
   for (const key of Object.keys(p.suspicion).sort((a, b) => Number(a) - Number(b))) {
     const clan = Number(key);
@@ -778,6 +816,188 @@ function resolveRaid(sim: Simulation, p: PlayerState, clan: number, rng: import(
   for (const m of sim.clanMembers.get(clan) ?? []) if (c.alive[m]) sim.rel.update(c.slot[m], p.id, sim.tick, -0.4, 0, 0.4, 0.05);
   p.suspicion[clan] = 0;
   sim.rebuildDerived();
+}
+
+// ---------------------------------------------------------------- companions, visitors, courtship
+
+/** Absolute sub-step now, or -1 at night. */
+function nowSub(sim: Simulation): number {
+  const S = sim.cfg.time.subStepsPerDay;
+  return sim.nextSubStep < 0 || sim.nextSubStep >= S ? -1 : sim.tick * S + sim.nextSubStep;
+}
+
+function endOfDay(sim: Simulation): number {
+  return (sim.tick + 1) * sim.cfg.time.subStepsPerDay;
+}
+
+/** Moves someone who is walking over to the player, or walking with them (called from movement). */
+export function movePlayerBound(sim: Simulation, id: number, now: number): void {
+  const c = sim.agents.cols;
+  const p = sim.player!;
+  const px = c.x[p.id];
+  const py = c.y[p.id];
+  // Once out with the player, they walk home on their own afterwards.
+  if (c.phase[id] === PHASE_HOME) c.phase[id] = PHASE_RETURN;
+  spend(sim, id, sim.cfg.metabolism.walkCostPerStep);
+  if (c.escortUntil[id] > now) {
+    // Keep pace beside the player (the renderer draws them trailing).
+    const a = (id % 7) * 0.9;
+    const x = px + Math.cos(a) * 0.9;
+    const y = py + Math.sin(a) * 0.9;
+    const t = Math.floor(y) * sim.world.width + Math.floor(x);
+    if (sim.world.movementCost[t] < sim.cfg.world.impassableCost) {
+      c.x[id] = x;
+      c.y[id] = y;
+    } else {
+      c.x[id] = px;
+      c.y[id] = py;
+    }
+    return;
+  }
+  // Walking over: straight toward the player, as far as a sub-step's walk allows.
+  let budget = sim.cfg.movement.speedCostPerStep;
+  let x = c.x[id];
+  let y = c.y[id];
+  const W = sim.world.width;
+  for (let k = 0; k < 40 && budget > 0; k++) {
+    const dx = px - x;
+    const dy = py - y;
+    const d = Math.hypot(dx, dy);
+    if (d <= 1.1) break;
+    const step = Math.min(0.5, d - 1.0);
+    const nx = x + (dx / d) * step;
+    const ny = y + (dy / d) * step;
+    const t = Math.floor(ny) * W + Math.floor(nx);
+    const cost = sim.world.movementCost[t];
+    if (cost >= sim.cfg.world.impassableCost) break; // water in the way: they wait at the bank
+    budget -= cost * step;
+    x = nx;
+    y = ny;
+  }
+  c.x[id] = x;
+  c.y[id] = y;
+  if (Math.hypot(px - x, py - y) <= 1.2) {
+    c.comeUntil[id] = 0;
+    c.heldUntil[id] = now + sim.cfg.play.hailHoldFriend;
+  }
+}
+
+/** Before each sub-step: people who have heard good things may come to the player on their own. */
+export function playerSubStep(sim: Simulation, s: number): void {
+  const p = sim.player!;
+  const pc = sim.cfg.play;
+  if (p.renown <= 0.02) return;
+  const rng = sim.rng.get('player');
+  if (!rng.chance(pc.visitChancePerSubStep * p.renown)) return;
+  const c = sim.agents.cols;
+  const now = sim.tick * sim.cfg.time.subStepsPerDay + s;
+  const cands: number[] = [];
+  for (const id of sim.agents.living) {
+    if (id === p.id || c.clanId[id] === p.clanId || c.comeUntil[id] > now || c.escortUntil[id] > now || c.heldUntil[id] > now) continue;
+    if (ageYears(sim, id) < sim.cfg.life.independentAgeYears || c.followId[id] !== NO_ID) continue;
+    if (Math.hypot(c.x[id] - c.x[p.id], c.y[id] - c.y[p.id]) > pc.visitRange) continue;
+    const v = sim.rel.get(c.slot[id], p.id, sim.tick);
+    if ((v?.grudge ?? 0) > 0.2 || (v?.aff ?? 0) < -0.1) continue;
+    // Those with a need you are known to meet, and the clanless.
+    if (c.energy[id] < 0.5 || needsTending(sim, id) || c.clanId[id] === LONER || (v?.aff ?? 0) > 0.4) cands.push(id);
+  }
+  if (!cands.length) return;
+  const who = cands[rng.int(cands.length)];
+  c.comeUntil[who] = now + pc.comeSubSteps;
+  sim.events.emit(sim.tick, { type: 'player.visit', causes: [], agents: [who, p.id], x: c.x[who], y: c.y[who], data: {} });
+}
+
+/** Would t walk with the player? Liking, renown, loneliness; strangers mostly not. */
+export function walkOdds(sim: Simulation, t: number): number {
+  const c = sim.agents.cols;
+  const p = sim.player!;
+  const v = sim.rel.get(c.slot[t], p.id, sim.tick);
+  let lonely = 0;
+  sim.rel.forEach(c.slot[t], sim.tick, (o, x) => {
+    if (x.aff > 0.25 && c.alive[o]) lonely++;
+  });
+  const z = 5 * (v?.aff ?? 0) + 2 * p.renown + (lonely < 2 ? 1 : 0) + (c.clanId[t] === LONER ? 1 : 0) - 1.2 - 3 * (v?.grudge ?? 0);
+  return 1 / (1 + Math.exp(-z));
+}
+
+function walkWith(sim: Simulation, p: PlayerState, t: number, witnesses: number[]): ActionResult {
+  const c = sim.agents.cols;
+  if (!isAlive(sim, t) || t === p.id) return { ok: false, text: 'They are gone.' };
+  const name = sim.agents.displayName(t);
+  const now = nowSub(sim);
+  if (now < 0) return { ok: false, text: 'It is night; walk together tomorrow.' };
+  if (ageYears(sim, t) < sim.cfg.life.independentAgeYears) return { ok: false, text: `${name} is too young to wander off with you.` };
+  const seenBy = observe(sim, p, t, 'walk', witnesses);
+  if (!sim.rng.get('player').chance(walkOdds(sim, t))) {
+    engage(sim, t);
+    return { ok: true, text: `${name} would rather not, not yet.`, seenBy };
+  }
+  c.escortUntil[t] = Math.min(endOfDay(sim), now + sim.cfg.play.escortSubSteps);
+  c.heldUntil[t] = 0;
+  c.comeUntil[t] = 0;
+  sim.rel.update(c.slot[t], p.id, sim.tick, 0.04, 0, 0, 0.1);
+  return { ok: true, text: `${name} walks with you.`, seenBy };
+}
+
+/** Can the player and t court at all (the sim's own pairing rules: adults, unpaired, not kin, not too far apart in age)? */
+export function courtable(sim: Simulation, t: number): string {
+  const c = sim.agents.cols;
+  const p = sim.player!;
+  if (!isAlive(sim, t)) return 'gone';
+  if (c.sex[t] === c.sex[p.id]) return '';
+  if (isAlive(sim, c.partnerId[p.id])) return c.partnerId[p.id] === t ? 'married' : '';
+  if (isAlive(sim, c.partnerId[t])) return '';
+  if (ageYears(sim, t) < sim.cfg.life.pairMinAgeYears) return '';
+  const gap = Math.abs(c.birthTick[t] - c.birthTick[p.id]) / sim.cfg.time.daysPerYear;
+  if (gap > sim.cfg.reproduction.pairingMaxAgeGapYears) return '';
+  return 'yes';
+}
+
+export function proposeOdds(sim: Simulation, t: number): number {
+  const c = sim.agents.cols;
+  const p = sim.player!;
+  const court = p.courtship[t] ?? 0;
+  const aff = sim.rel.affinity(c.slot[t], p.id, sim.tick);
+  const z = (court - sim.cfg.play.proposeAt) * 7 + (aff - 0.5) * 4 + p.renown;
+  return 1 / (1 + Math.exp(-z));
+}
+
+function court(sim: Simulation, p: PlayerState, t: number, witnesses: number[]): ActionResult {
+  const c = sim.agents.cols;
+  const pc = sim.cfg.play;
+  const name = sim.agents.displayName(t);
+  if (courtable(sim, t) !== 'yes') return { ok: false, text: `You cannot court ${name}.` };
+  const key = `court:${t}`;
+  if (p.lastHelp[key] === sim.tick) return { ok: false, text: `You have spent your charm on ${name} for today.` };
+  p.lastHelp[key] = sim.tick;
+  const rng = sim.rng.get('player');
+  const pull = attraction(sim, t, p.id, rng); // how the sim's pairing would see you
+  const step = pc.courtStep * Math.max(0.2, pull);
+  p.courtship[t] = Math.min(1, (p.courtship[t] ?? 0) + step);
+  sim.rel.update(c.slot[t], p.id, sim.tick, pc.courtAffinity * (0.5 + pull), 0, 0, 0.1);
+  engage(sim, t);
+  const seenBy = observe(sim, p, t, 'court', witnesses);
+  const k = p.courtship[t];
+  return { ok: true, text: k >= pc.proposeAt ? `${name} lingers close; they would hear a proposal.` : k > 0.3 ? `${name} laughs with you, a little shy.` : `${name} listens, curious.`, seenBy };
+}
+
+function propose(sim: Simulation, p: PlayerState, t: number, witnesses: number[]): ActionResult {
+  const c = sim.agents.cols;
+  const name = sim.agents.displayName(t);
+  if (courtable(sim, t) !== 'yes') return { ok: false, text: `You cannot marry ${name}.` };
+  const seenBy = observe(sim, p, t, 'propose', witnesses);
+  if (!sim.rng.get('player').chance(proposeOdds(sim, t))) {
+    p.courtship[t] = Math.max(0, (p.courtship[t] ?? 0) - 0.2);
+    return { ok: true, text: `${name} is not ready. Give it time.`, seenBy };
+  }
+  const from = c.clanId[t];
+  const ev = formPair(sim, p.id, t);
+  delete p.courtship[t];
+  if (from !== p.clanId) moveClan(sim, t, p.clanId, 'married the stranger', [ev]);
+  c.escortUntil[t] = 0;
+  p.renown = Math.min(1, p.renown + 0.05);
+  sim.rebuildDerived();
+  return { ok: true, text: `${name} says yes! You are wed, and ${name} comes to live at your camp${from >= 0 && from !== p.clanId ? `, leaving ${sim.clans.get(from)?.name ?? 'their clan'}` : ''}.`, seenBy };
 }
 
 // ---------------------------------------------------------------- snapshot

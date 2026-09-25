@@ -24,6 +24,7 @@ export const G_RUN = 3;
 export const G_SIT = 4;
 
 const VERT = /* glsl */ `
+#include <fog_pars_vertex>
 uniform float uTime;
 uniform int uPart;
 attribute vec3 iPos;      // world position of the feet
@@ -110,11 +111,14 @@ void main(){
   vHair = iHair;
   vPaint = iMisc.x;
   vPallor = iMisc.z;
-  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  vec4 mvPosition = viewMatrix * vec4(world, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
 }
 `;
 
 const FRAG = /* glsl */ `
+#include <fog_pars_fragment>
 uniform int uPart;
 uniform float uDaylight;
 uniform vec3 uPaintColors[8];
@@ -151,6 +155,7 @@ void main(){
   vec3 L = normalize(vec3(0.4, 0.9, 0.3));
   float diff = max(dot(normalize(vNormal), L), 0.) * 0.6 + 0.5;
   gl_FragColor = vec4(base * diff * (0.4 + 0.6 * uDaylight), 1.0);
+  #include <fog_fragment>
 }
 `;
 
@@ -252,9 +257,10 @@ export class Humans {
       const geo = partGeometry(part);
       for (const [k, a] of Object.entries(this.attrs)) geo.setAttribute(k, a);
       const mat = new THREE.ShaderMaterial({
-        uniforms: { uTime: { value: 0 }, uPart: { value: part }, uDaylight: { value: 1 }, uPaintColors: { value: paintColors } },
+        uniforms: { ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), uTime: { value: 0 }, uPart: { value: part }, uDaylight: { value: 1 }, uPaintColors: { value: paintColors } },
         vertexShader: VERT,
         fragmentShader: FRAG,
+        fog: true,
       });
       const mesh = new THREE.InstancedMesh(geo, mat, cap);
       mesh.frustumCulled = false;

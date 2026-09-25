@@ -27,6 +27,7 @@
     <aside id="watch" aria-label="You, and how other clans see you">
       <div class="label">You</div>
       <div id="stat-body" title="Hunger and health">—</div>
+      <div id="stat-renown" title="Renown grows with generosity, healing and great hunts; it draws people to you">—</div>
       <div id="stat-skills" title="Hunting · gathering · woodcutting skill (grow with practice); wood in hand">—</div>
       <div class="label" style="margin-top:10px">Suspicion</div>
       <div id="suspicion"></div>
@@ -50,12 +51,12 @@
       <button id="btn-take" title="Take food from your camp store (at camp) (F)"><kbd>F</kbd> Take food</button>
       <button id="btn-home" title="Walk back to your camp (B)"><kbd>B</kbd> Go home</button>
       <button id="btn-clan" title="Your clan and raids (R)"><kbd>R</kbd> Clan &amp; raids</button>
-      <div id="hint">WASD / arrows or click the ground to walk · click a person or an animal · right-drag to turn · wheel to zoom</div>
+      <div id="hint">WASD / arrows or click the ground to walk · click a person or an animal · drag to look around · wheel to zoom (all the way in for first person)</div>
     </footer>
 
     <ol id="toasts" aria-live="polite"></ol>
 
-    <div id="start" class="screen">
+    <div id="start" class="screen" hidden>
       <div class="panel">
         <div class="brand big">Terrarium</div>
         <h1>Found a clan</h1>
@@ -73,7 +74,7 @@
       </div>
     </div>
 
-    <div id="loading" class="screen" hidden>
+    <div id="loading" class="screen">
       <div class="panel">
         <h1>The valley before you</h1>
         <div class="progress"><span id="load-fill"></span></div>
@@ -86,7 +87,7 @@
       <div class="panel wide">
         <h1>How to play</h1>
         <ul>
-          <li><b>Move</b> with WASD / arrow keys, or click the ground. Right-drag turns the camera; the wheel zooms.</li>
+          <li><b>Move</b> with WASD / arrow keys, or click the ground. <b>Drag</b> to look around; the <b>wheel</b> zooms from over-the-shoulder all the way into your own eyes.</li>
           <li><b>Read people.</b> Icons over heads show what they want: 🍖 hungry, 🍼 children hungry, 🩹 wounded, 🤒 unwell, 🗡️ wants revenge, 😞 unhappy in their clan, 💬 lonely, 💞 seeks a partner, 👑 leader, ⭐ has a following. Click someone to see what they are doing and why.</li>
           <li><b>Help them</b> when you are close (inner ring): talk, give food, tend wounds, or back their grudge. Each builds real affection and respect toward you.</li>
           <li><b>Invite</b> them to your clan. They decide the way everyone here does, weighing their ties to you and your people against their ties at home. Lonely, unhappy and hungry people come easiest, and their partners and children may follow.</li>
@@ -99,6 +100,7 @@
           <li><b>Goal</b>: make your clan the largest in the valley.</li>
         </ul>
         <button id="howto-close" class="primary">Got it</button>
+        <button id="btn-newworld" title="Choose a name and start in a new world">New world…</button>
       </div>
     </div>
 

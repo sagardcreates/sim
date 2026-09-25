@@ -44,17 +44,52 @@ export class Animals {
   private q = new THREE.Quaternion();
   private up = new THREE.Vector3(0, 1, 0);
   private colors = ANIMALS.map((a) => new THREE.Color(a.color));
+  private dead: THREE.InstancedMesh;
+  private carcasses: { x: number; y: number; kind: number; at: number; heading: number }[] = [];
 
   constructor(private terrain: Terrain, private biome: Uint8Array, private W: number, private H: number) {
     this.mesh = new THREE.InstancedMesh(quadruped(), new THREE.MeshLambertMaterial({ flatShading: true }), MAX);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
-    this.group.add(this.mesh);
+    this.mesh.castShadow = true;
+    this.dead = new THREE.InstancedMesh(this.mesh.geometry, new THREE.MeshLambertMaterial({ flatShading: true }), 64);
+    this.dead.count = 0;
+    this.dead.frustumCulled = false;
+    this.group.add(this.mesh, this.dead);
+  }
+
+  /** A killed animal lies on its side for ~45 s. */
+  addCarcass(x: number, y: number, kind: number): void {
+    this.carcasses.push({ x: x + 0.2, y: y + 0.1, kind, at: performance.now(), heading: (x * 7 + y * 3) % 6.28 });
+    if (this.carcasses.length > 64) this.carcasses.shift();
+  }
+
+  private drawCarcasses(): void {
+    const now = performance.now();
+    this.carcasses = this.carcasses.filter((c) => now - c.at < 45000);
+    const e = new THREE.Euler();
+    let n = 0;
+    for (const c of this.carcasses) {
+      const age = (now - c.at) / 1000;
+      const fall = Math.min(1, age / 0.6); // topples over
+      const fade = age > 42 ? Math.max(0.01, 1 - (age - 42) / 3) : 1;
+      const s = ANIMALS[c.kind].size * 0.9 * fade;
+      e.set(fall * Math.PI / 2, c.heading, 0, 'YXZ');
+      this.q.setFromEuler(e);
+      this.m.compose(new THREE.Vector3(c.x, this.terrain.heightAt(c.x, c.y) + 0.05, c.y), this.q, new THREE.Vector3(s, s, s));
+      this.dead.setMatrixAt(n, this.m);
+      this.dead.setColorAt(n, this.colors[c.kind]);
+      n++;
+    }
+    this.dead.count = n;
+    this.dead.instanceMatrix.needsUpdate = true;
+    if (this.dead.instanceColor) this.dead.instanceColor.needsUpdate = true;
   }
 
   /** Rebuilds the animals within `radius` tiles of (cx, cy) from the current game density. */
   update(density: Float32Array | undefined, cx: number, cy: number, radius: number, time: number, px: number, py: number, tileRate: number): void {
     this.spots.length = 0;
+    this.drawCarcasses();
     if (!density) {
       this.mesh.count = 0;
       return;

@@ -13,6 +13,7 @@ import {
 } from '../state/agents';
 import { FlowFields } from '../world/flowfield';
 import { contact } from './social';
+import { movePlayerBound } from '../play/player';
 import {
   ageYears, feed, isAlive, placeAtHome, placeAtTile, sizeFactor, spend, strength, tileOf,
 } from './common';
@@ -23,6 +24,10 @@ export function movementSubStep(sim: Simulation, order: readonly number[], s: nu
   for (const id of order) {
     if (c.followId[id] !== NO_ID) continue; // followers move after their leaders
     if (c.heldUntil[id] > now) continue; // stopped to talk (play mode)
+    if (sim.player && (c.escortUntil[id] > now || c.comeUntil[id] > now)) {
+      movePlayerBound(sim, id, now);
+      continue;
+    }
     const ph = c.phase[id];
     if (ph === PHASE_HOME) continue;
     if (ph === PHASE_OUT) walkOut(sim, id, s);

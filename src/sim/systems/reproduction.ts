@@ -29,7 +29,8 @@ export function reproductionSystem(sim: Simulation): void {
   const order = sim.shuffledLiving(rng);
   const pid = playerId(sim);
   for (const id of order) {
-    if (!c.alive[id] || c.sex[id] !== SEX_FEMALE || id === pid) continue;
+    if (!c.alive[id] || c.sex[id] !== SEX_FEMALE) continue;
+    if (id === pid && !isAlive(sim, c.partnerId[id])) continue; // the player has children only once married
     const age = ageYears(sim, id);
     const st = c.repState[id];
     if (st === REP_NONE) {
@@ -87,7 +88,7 @@ function giveBirth(sim: Simulation, mother: number, rng: Rng): void {
   const l = sim.cfg.life;
   const tick = sim.tick;
   const risk = rc.birthRiskBase + rc.birthRiskLowHealth * (1 - c.health[mother]) ** 2;
-  const motherDies = rng.chance(risk);
+  const motherDies = mother !== playerId(sim) && rng.chance(risk);
   if (motherDies && !rng.chance(rc.newbornSurvivesMaternalDeath)) {
     const ev = sim.events.emit(tick, { type: 'agent.stillbirth', causes: [], agents: [mother], x: c.x[mother], y: c.y[mother] });
     killAgent(sim, mother, CAUSE_CHILDBIRTH, [ev]);

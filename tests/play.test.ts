@@ -133,24 +133,59 @@ describe('play mode', () => {
     expect(moved).toBeGreaterThan(0);
   });
 
-  it('someone the player calls out to stops and waits', () => {
+  it('someone the player calls over walks to them, then waits', () => {
     const sim = newGame(10, 1);
     const c = sim.agents.cols;
+    const me = sim.player!.id;
     sim.beginDay();
     sim.subStep(0);
     sim.subStep(1);
-    // Anyone out walking.
-    const walker = sim.agents.living.find((id) => c.phase[id] === 1 /* out */ && c.followId[id] === -1)!;
+    const walker = sim.agents.living.find((id) => id !== me && c.phase[id] === 1 /* out */ && c.followId[id] === -1)!;
     expect(walker).toBeDefined();
-    const r = applyPlayerAction(sim, { kind: 'hail', target: walker });
-    expect(r.ok).toBe(true);
-    const x = c.x[walker];
-    const y = c.y[walker];
+    // Stand a few steps from them.
+    c.x[me] = c.x[walker] + 4;
+    c.y[me] = c.y[walker];
+    const d0 = Math.hypot(c.x[walker] - c.x[me], c.y[walker] - c.y[me]);
+    expect(applyPlayerAction(sim, { kind: 'hail', target: walker }).ok).toBe(true);
     sim.subStep(2);
     sim.subStep(3);
-    expect([c.x[walker], c.y[walker]]).toEqual([x, y]);
+    const d1 = Math.hypot(c.x[walker] - c.x[me], c.y[walker] - c.y[me]);
+    expect(d1).toBeLessThan(d0);
+    expect(d1).toBeLessThan(1.6);
     for (let s = 4; s < 8; s++) sim.subStep(s);
     sim.endDay();
+  });
+
+  it('a companion walks with the player; marriage brings the spouse home', () => {
+    const sim = newGame(13, 1);
+    const c = sim.agents.cols;
+    const p = sim.player!;
+    // A clan member of the opposite sex, unpaired, of a fitting age.
+    const mate = sim.agents.living.find((id) => id !== p.id && c.clanId[id] >= 0 && c.sex[id] !== c.sex[p.id]
+      && c.partnerId[id] === -1 && ageYears(sim, id) >= 18 && ageYears(sim, id) <= 35)!;
+    expect(mate).toBeDefined();
+    // Make them fond of the player (as many days of company would).
+    sim.rel.update(c.slot[mate], p.id, sim.tick, 1, 0.3, 0, 0.5);
+    sim.beginDay();
+    applyPlayerAction(sim, { kind: 'walk', target: mate, witnesses: [] });
+    expect(c.escortUntil[mate]).toBeGreaterThan(sim.tick * 8);
+    c.x[p.id] += 3;
+    sim.subStep(0);
+    expect(Math.hypot(c.x[mate] - c.x[p.id], c.y[mate] - c.y[p.id])).toBeLessThan(1.5);
+    for (let s = 1; s < 8; s++) sim.subStep(s);
+    sim.endDay();
+    // Court over some days, then propose until accepted.
+    let wed = false;
+    for (let d = 0; d < 20 && !wed; d++) {
+      applyPlayerAction(sim, { kind: 'court', target: mate, witnesses: [] });
+      if ((p.courtship[mate] ?? 0) >= sim.cfg.play.proposeAt) {
+        applyPlayerAction(sim, { kind: 'propose', target: mate, witnesses: [] });
+        wed = c.partnerId[p.id] === mate;
+      }
+      sim.step();
+    }
+    expect(wed).toBe(true);
+    expect(c.clanId[mate]).toBe(p.clanId);
   });
 
   it('hunting yields food and grows skill; big game needs skill', () => {

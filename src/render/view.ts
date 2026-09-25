@@ -6,6 +6,7 @@
  */
 import * as THREE from 'three';
 import { Animals, type AnimalSpot } from './animals';
+import { Ambience } from './ambience';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import {
   A_AGE, A_CLAN, A_ENERGY, A_FOLLOW, A_GOAL, A_HAIR, A_HEALTH, A_HEIGHT, A_INJURY, A_LEADER, A_MARKER, A_REP, A_SEX, A_SKIN,
@@ -24,7 +25,17 @@ const GOAL_COLORS = ['#c9c4b8', '#7fd36b', '#ff6b5b', '#f2c14e', '#6bc6ff', '#ff
 export class TerrariumView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
-  readonly camera: THREE.OrthographicCamera;
+  readonly camera: THREE.OrthographicCamera | THREE.PerspectiveCamera;
+  /** Game view: perspective camera orbiting the player (yaw/pitch/distance), ground-level detail. */
+  readonly thirdPerson: boolean;
+  yaw = 0.6;
+  /** Seconds since the last frame (camera smoothing is frame-rate independent). */
+  frameDt = 1 / 60;
+  pitch = 0.42;
+  dist = 6.5;
+  private ambience?: Ambience;
+  /** People walking with the player, drawn trailing them (client-side positions). */
+  companions = new Map<number, { x: number; y: number }>();
   readonly controls: MapControls;
   terrain?: Terrain;
   camps?: Camps;
@@ -74,14 +85,21 @@ export class TerrariumView {
   /** Screen position of the followed agent (for the thought bubble), or null. */
   followScreen: { x: number; y: number } | null = null;
 
-  constructor(private container: HTMLElement) {
+  constructor(private container: HTMLElement, opts: { thirdPerson?: boolean } = {}) {
+    this.thirdPerson = !!opts.thirdPerson;
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     container.appendChild(this.renderer.domElement);
     this.scene.background = new THREE.Color('#1b2230');
     const aspect = container.clientWidth / Math.max(1, container.clientHeight);
     const size = 60;
-    this.camera = new THREE.OrthographicCamera(-size * aspect / 2, size * aspect / 2, size / 2, -size / 2, -500, 500);
+    this.camera = this.thirdPerson
+      ? new THREE.PerspectiveCamera(55, aspect, 0.05, 600)
+      : new THREE.OrthographicCamera(-size * aspect / 2, size * aspect / 2, size / 2, -size / 2, -500, 500);
+    if (this.thirdPerson) {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    }
     this.camera.position.set(48 + 60, 80, 48 + 60);
     this.camera.zoom = 1;
     this.controls = new MapControls(this.camera, this.renderer.domElement);
@@ -96,6 +114,14 @@ export class TerrariumView {
     this.hemi = new THREE.HemisphereLight('#dfe8ff', '#5a4a36', 0.9);
     this.sun = new THREE.DirectionalLight('#fff4de', 1.4);
     this.sun.position.set(-40, 80, 20);
+    if (this.thirdPerson) {
+      this.sun.castShadow = true;
+      this.sun.shadow.mapSize.set(2048, 2048);
+      const sc = this.sun.shadow.camera;
+      sc.left = -28; sc.right = 28; sc.top = 28; sc.bottom = -28; sc.near = 1; sc.far = 160;
+      this.sun.shadow.bias = -0.0008;
+      this.scene.add(this.sun.target);
+    }
     this.selectionRing = new THREE.Mesh(new THREE.RingGeometry(0.32, 0.42, 24), new THREE.MeshBasicMaterial({ color: '#f5c451', transparent: true, opacity: 0.9, depthTest: false }));
     this.selectionRing.rotation.x = -Math.PI / 2;
     this.selectionRing.renderOrder = 10;
@@ -111,6 +137,11 @@ export class TerrariumView {
     this.renderer.setSize(w, h);
     const aspect = w / h;
     const size = 60;
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.aspect = aspect;
+      this.camera.updateProjectionMatrix();
+      return;
+    }
     this.camera.left = (-size * aspect) / 2;
     this.camera.right = (size * aspect) / 2;
     this.camera.top = size / 2;
@@ -121,7 +152,7 @@ export class TerrariumView {
   setWorld(w: WorldMsg): void {
     if (this.terrain) this.scene.remove(this.terrain.group);
     if (this.camps) this.scene.remove(this.camps.group);
-    this.terrain = new Terrain(w);
+    this.terrain = this.thirdPerson ? new Terrain(w, { detail: 3, treeScale: 1.9, ocean: true }) : new Terrain(w);
     this.camps = new Camps(this.terrain);
     this.scene.add(this.terrain.group, this.camps.group);
     this.terrain.recolor(1, 1);
@@ -133,6 +164,12 @@ export class TerrariumView {
     if (this.animals) this.scene.remove(this.animals.group);
     this.animals = new Animals(this.terrain, w.biome, w.width, w.height);
     this.scene.add(this.animals.group);
+    if (this.thirdPerson) {
+      if (this.ambience) this.scene.remove(this.ambience.group);
+      this.ambience = new Ambience(w, this.terrain);
+      this.scene.add(this.ambience.group);
+      this.scene.fog = this.ambience.fog;
+    }
   }
 
   onDay(d: DayMsg): void {
@@ -255,7 +292,7 @@ export class TerrariumView {
     this.camps?.animate(time, daylight);
     const t0 = performance.now();
     this.buildInstances(time);
-    const lod = this.chronicle || this.camera.zoom < 1.6;
+    const lod = !this.thirdPerson && (this.chronicle || this.camera.zoom < 1.6);
     const headdress = this.instances.findIndex((h) => h.headdress <= 0);
     this.humans.set(this.instances, lod, this.pointColors, headdress < 0 ? this.instances.length : headdress);
     this.lastBuildMs = performance.now() - t0;
@@ -277,7 +314,7 @@ export class TerrariumView {
     }
     // Follow-cam.
     this.followScreen = null;
-    if (this.mode === 'follow' && this.followId >= 0) {
+    if (!this.thirdPerson && this.mode === 'follow' && this.followId >= 0) {
       const k = this.instanceIds.indexOf(this.followId);
       if (k >= 0) {
         const h = this.instances[k];
@@ -291,7 +328,8 @@ export class TerrariumView {
       }
     }
     this.fadeStreams();
-    this.controls.update();
+    if (this.thirdPerson) this.updateRig(daylight);
+    else this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -309,7 +347,8 @@ export class TerrariumView {
     const pos: [number, number][] = [];
     for (let i = 0; i < n; i++) {
       index.set(d.ids[i], i);
-      pos.push(this.player && d.ids[i] === this.player.id ? [this.player.x, this.player.y] : this.positionAt(d, i, f));
+      const comp = this.companions.get(d.ids[i]);
+      pos.push(this.player && d.ids[i] === this.player.id ? [this.player.x, this.player.y] : comp ? [comp.x, comp.y] : this.positionAt(d, i, f));
     }
     const campOf = new Map(d.clans.map((c) => [c.id, c]));
     const leaders: HumanInstance[] = [];
@@ -324,8 +363,10 @@ export class TerrariumView {
       const age = A[o + A_AGE];
       let [x, y] = pos[i];
       const isMe = this.player !== null && id === this.player.id;
+      if (isMe && this.thirdPerson && this.dist < 0.7) continue; // first person: no body in the way
+      const compPos = this.companions.get(id);
       // Heading from motion; at camp, face the fire.
-      const [x2, y2] = isMe ? [x, y] : this.positionAt(d, i, Math.min(d.subSteps - 1, f + 0.25));
+      const [x2, y2] = isMe || compPos ? [x, y] : this.positionAt(d, i, Math.min(d.subSteps - 1, f + 0.25));
       const dx = x2 - x;
       const dy = y2 - y;
       const moving = Math.hypot(dx, dy) > 0.01;
@@ -347,7 +388,8 @@ export class TerrariumView {
       }
       // Infants ride on their mother.
       const mom = A[o + A_FOLLOW];
-      let speed = isMe ? this.player!.speed : moving ? Math.min(1, Math.hypot(dx, dy) * 3) : 0;
+      let speed = isMe ? this.player!.speed : compPos ? this.player?.speed ?? 0 : moving ? Math.min(1, Math.hypot(dx, dy) * 3) : 0;
+      if (compPos && this.player) heading = this.player.heading;
       if (mom >= 0 && index.has(mom)) {
         const mi = index.get(mom)!;
         const mh = this.headings.get(mom) ?? heading;
@@ -419,6 +461,55 @@ export class TerrariumView {
     }
   }
 
+  /** Third-person camera: orbit the player at (yaw, pitch, dist); below ~0.7 it becomes first person. */
+  private updateRig(daylight: number): void {
+    if (!this.terrain || !(this.camera instanceof THREE.PerspectiveCamera)) return;
+    const p = this.player ?? { x: this.controls.target.x, y: this.controls.target.z, heading: 0 };
+    const ground = this.terrain.heightAt(p.x, p.y);
+    const head = new THREE.Vector3(p.x, ground + 1.05, p.y);
+    if (this.dist < 0.7) {
+      // First person: eyes, looking along the view direction.
+      // Drag pitch 0.3 looks level; more looks down, less looks up.
+      const look = Math.max(-0.6, Math.min(0.9, this.pitch - 0.3));
+      const fwd = new THREE.Vector3(-Math.sin(this.yaw) * Math.cos(look), -Math.sin(look), -Math.cos(this.yaw) * Math.cos(look));
+      this.camera.position.copy(head).add(new THREE.Vector3(0, -0.08, 0));
+      this.camera.lookAt(this.camera.position.clone().add(fwd));
+      this.terrain.cutaway(p.x, p.y, p.x, p.y);
+    } else {
+      const off = new THREE.Vector3(Math.sin(this.yaw) * Math.cos(this.pitch), Math.sin(this.pitch), Math.cos(this.yaw) * Math.cos(this.pitch)).multiplyScalar(this.dist);
+      const want = head.clone().add(off);
+      // Keep the camera above the ground.
+      want.y = Math.max(want.y, this.terrain.heightAt(want.x, want.z) + 0.35);
+      this.camera.position.lerp(want, Math.min(1, this.frameDt * 12));
+      this.camera.lookAt(head);
+      this.terrain.cutaway(this.camera.position.x, this.camera.position.z, p.x, p.y);
+    }
+    this.controls.target.set(p.x, ground, p.y);
+    // Sun arcs with the time of day; shadows are cast around the player.
+    const t = this.cur?.dayFraction ? (this.cur.dayFraction[0] + this.cur.dayFraction[1]) / 2 : 0.5;
+    const ang = Math.PI * Math.min(1, Math.max(0, t));
+    const dir = new THREE.Vector3(Math.cos(ang) * 0.8, 0.25 + Math.sin(ang) * 0.9, 0.35).normalize();
+    this.sun.position.set(p.x + dir.x * 60, ground + dir.y * 60, p.y + dir.z * 60);
+    this.sun.target.position.set(p.x, ground, p.y);
+    this.sun.color.set('#fff4de').lerp(new THREE.Color('#ffb070'), Math.max(0, 1 - Math.sin(ang) * 1.6));
+    if (this.ambience) {
+      this.ambience.setSunDirection(dir);
+      const feet = this.instances.map((h) => ({ x: h.x, y: h.y, z: h.z, s: h.scale }));
+      this.ambience.update(this.camera, daylight, p.x, p.y, feet, this.cur?.climate.season ?? 1);
+      this.scene.background = null;
+    }
+  }
+
+  /** A kill: the animal lies where it fell for a while. */
+  addCarcass(x: number, y: number, kind: number): void {
+    this.animals?.addCarcass(x, y, kind);
+  }
+
+  /** Felled trees (play mode). */
+  setFelled(felled: [number, number][]): void {
+    this.terrain?.setFelled(felled, performance.now());
+  }
+
   /** Play mode: rings under the player (you), your reach, and how far eyes can see you. */
   setPlayerRings(reach: number, sight: number, color: string): void {
     const mk = (r0: number, r1: number, c: string, o: number) => {
@@ -436,7 +527,8 @@ export class TerrariumView {
 
   private updatePlayerRings(time: number): void {
     const p = this.player;
-    for (const m of [this.playerRing, this.reachRing, this.sightRing]) if (m) m.visible = !!p && !!this.terrain;
+    const fp = this.thirdPerson && this.dist < 0.7;
+    for (const m of [this.playerRing, this.reachRing, this.sightRing]) if (m) m.visible = !!p && !!this.terrain && !fp;
     if (!p || !this.terrain) return;
     const h = this.terrain.heightAt(p.x, p.y) + 0.04;
     this.playerRing?.position.set(p.x, h, p.y);
@@ -476,6 +568,7 @@ export class TerrariumView {
       const dist = Math.hypot(h.x - x, h.z - y);
       if (dist > r) continue;
       v.set(h.x, h.y + 1.35 * h.scale, h.z).project(this.camera);
+      if (v.z > 1) continue; // behind the camera
       out.push({ id: this.instanceIds[k], x: h.x, y: h.z, sx: rect.left + ((v.x + 1) / 2) * rect.width, sy: rect.top + ((1 - v.y) / 2) * rect.height, dist });
     }
     return out.sort((a, b) => a.dist - b.dist);
@@ -486,8 +579,16 @@ export class TerrariumView {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const h = this.terrain ? this.terrain.heightAt(x, y) : 0;
     const v = new THREE.Vector3(x, h + lift, y).project(this.camera);
-    const sx = rect.left + ((v.x + 1) / 2) * rect.width;
-    const sy = rect.top + ((1 - v.y) / 2) * rect.height;
+    let sx = rect.left + ((v.x + 1) / 2) * rect.width;
+    let sy = rect.top + ((1 - v.y) / 2) * rect.height;
+    if (v.z > 1) {
+      // Behind the camera: mirror so edge markers point the right way.
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      sx = cx - (sx - cx) * 50;
+      sy = cy + Math.abs(sy - cy) * 50 + rect.height;
+      return { sx, sy, on: false };
+    }
     return { sx, sy, on: sx >= rect.left && sx <= rect.right && sy >= rect.top && sy <= rect.bottom };
   }
 
@@ -504,7 +605,7 @@ export class TerrariumView {
     const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     const ray = new THREE.Raycaster();
     ray.setFromCamera(ndc, this.camera);
-    let h = this.terrain.heightAt(this.controls.target.x, this.controls.target.z);
+    let h = this.player ? this.terrain.heightAt(this.player.x, this.player.y) : this.terrain.heightAt(this.controls.target.x, this.controls.target.z);
     const hit = new THREE.Vector3();
     for (let k = 0; k < 4; k++) {
       const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -h);
@@ -516,6 +617,7 @@ export class TerrariumView {
 
   /** Camera azimuth (radians) so the player's keys move relative to the view. */
   azimuth(): number {
+    if (this.thirdPerson) return this.yaw;
     const d = this.camera.position.clone().sub(this.controls.target);
     return Math.atan2(d.x, d.z);
   }
@@ -529,6 +631,7 @@ export class TerrariumView {
     for (let k = 0; k < this.instances.length; k++) {
       const h = this.instances[k];
       v.set(h.x, h.y + 0.5 * h.scale, h.z).project(this.camera);
+      if (v.z > 1) continue;
       const sx = r.left + ((v.x + 1) / 2) * r.width;
       const sy = r.top + ((1 - v.y) / 2) * r.height;
       const dd = Math.hypot(sx - clientX, sy - clientY);

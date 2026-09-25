@@ -13,7 +13,7 @@ import { MEM_CAP } from '../sim/state/mind';
 import { WHY_LABELS } from '../sim/systems/decision';
 import { MEM_NAMES } from '../sim/systems/gossip';
 import { describe } from '../sim/history/historian';
-import { applyPlayerAction, availableHelp, inviteOdds, raidCheck, raidOdds, type PlayerAction } from '../sim/play/player';
+import { applyPlayerAction, availableHelp, courtable, inviteOdds, proposeOdds, raidCheck, raidOdds, walkOdds, type PlayerAction } from '../sim/play/player';
 import { doingText, feelingText, motivesOf, primaryMotive, whyText } from '../sim/play/motives';
 import { ageYears } from '../sim/systems/common';
 import {
@@ -313,6 +313,9 @@ function start(s: Simulation): void {
       if (ticker.length > 60) ticker = ticker.slice(-30);
     }
     if (GESTURE_EVENTS.has(e.type) && e.agents) dayEvents.push({ type: e.type, agents: e.agents.slice(0, 4), x: e.x, y: e.y });
+    if (playMode && s.player && e.type === 'player.kill') {
+      dayEvents.push({ type: 'kill', agents: [], x: e.x, y: e.y, text: String((e.data as { kind: number }).kind) });
+    }
     if (playMode && s.player) {
       const toast = playerToast(s, e);
       if (toast) dayEvents.push({ type: toast.tone, agents: e.agents?.slice(0, 2) ?? [], text: toast.text });
@@ -414,6 +417,7 @@ function startPlay(newSeed: number, name: string, female: boolean, warmupYears?:
   config = {};
   snapshots = new Map();
   daysPerSecond = 0;
+  config = { world: makeConfig().play.world };
   const s = Simulation.create(newSeed, makeConfig(config));
   sim = undefined; // not observable until the player arrives
   const total = warmupYears ?? s.cfg.play.warmupYears;
@@ -464,7 +468,7 @@ function act(s: Simulation, a: UiAction, subStep: number): void {
   const px = c.x[p.id];
   const py = c.y[p.id];
   let action: PlayerAction;
-  if (a.kind === 'help' || a.kind === 'invite') {
+  if (a.kind === 'help' || a.kind === 'invite' || a.kind === 'walk' || a.kind === 'court' || a.kind === 'propose') {
     const t = shownPos(s, a.target, subStep);
     if (Math.hypot(t.x - px, t.y - py) > pc.interactRadius + 0.75) {
       post({ type: 'actResult', ok: false, text: 'Too far away. Walk closer first.', seenBy: [] });
@@ -479,7 +483,7 @@ function act(s: Simulation, a: UiAction, subStep: number): void {
       const q = shownPos(s, w, subStep);
       if (Math.hypot(q.x - px, q.y - py) <= pc.witnessRadius) witnesses.push(w);
     }
-    action = a.kind === 'help' ? { kind: 'help', verb: a.verb, target: a.target, witnesses } : { kind: 'invite', target: a.target, witnesses };
+    action = a.kind === 'help' ? { kind: 'help', verb: a.verb, target: a.target, witnesses } : { kind: a.kind, target: a.target, witnesses };
   } else if (a.kind === 'take' || a.kind === 'deposit' || a.kind === 'build') {
     const camp = s.clans.get(p.clanId)!;
     if (Math.hypot(camp.campX - px, camp.campY - py) > 3.5) {
@@ -543,6 +547,10 @@ function playView(s: Simulation): PlayView {
     woodLeft: p.effortTick === s.tick ? Math.max(0, pc.woodActionsPerDay - p.woodToday) : pc.woodActionsPerDay,
     hailRadius: pc.hailRadius, huntRange: pc.huntRange, animalTileRate: pc.animalTileRate,
     night: s.nextSubStep < 0 || s.nextSubStep >= s.cfg.time.subStepsPerDay,
+    renown: p.renown, female: c.sex[p.id] === 0,
+    spouse: c.partnerId[p.id] >= 0 && c.alive[c.partnerId[p.id]] ? s.agents.displayName(c.partnerId[p.id]) : '',
+    companions: s.agents.living.filter((id) => c.escortUntil[id] > s.tick * s.cfg.time.subStepsPerDay + Math.max(0, s.nextSubStep)),
+    felled: Object.entries(p.felled).map(([t, f]) => [Number(t), f[0]] as [number, number]),
   };
 }
 
@@ -619,8 +627,13 @@ function person(s: Simulation, id: number): PersonMsg {
     help: alive ? availableHelp(s, id) : [],
     invite: alive && !inYourClan && ageYears(s, id) >= s.cfg.life.independentAgeYears ? inviteOdds(s, id) : null,
     inYourClan,
-    partner: partner >= 0 && c.alive[partner] ? s.agents.displayName(partner) : '',
+    partner: partner >= 0 && c.alive[partner] ? (partner === p.id ? 'you' : s.agents.displayName(partner)) : '',
     children: s.pedigree.childrenOf(id).filter((k) => c.alive[k]).length,
+    courtable: alive ? courtable(s, id) : '',
+    courtship: p.courtship[id] ?? 0,
+    proposeOdds: alive && courtable(s, id) === 'yes' ? proposeOdds(s, id) : 0,
+    walkOdds: alive ? walkOdds(s, id) : 0,
+    withYou: alive && c.escortUntil[id] > s.tick * s.cfg.time.subStepsPerDay + Math.max(0, s.nextSubStep),
   };
 }
 
@@ -632,6 +645,7 @@ function playerToast(s: Simulation, e: SimEvent): { tone: 'toast-good' | 'toast-
   const strip = (t: string) => t.replace(/^Year \d+: /, '');
   switch (e.type) {
     case 'player.caught': return { tone: 'toast-bad', text: strip(describe(s, e)) };
+    case 'player.visit': return { tone: 'toast', text: `${s.agents.displayName(e.agents![0])} has heard of you and comes to find you.` };
     case 'player.raid': return { tone: (e.data as { won: boolean }).won ? 'toast-good' : 'toast-bad', text: strip(describe(s, e)) };
     case 'agent.joined_clan':
       if (e.clans![0] !== p.clanId || (e.data as { reason: string }).reason === 'joined the stranger') return undefined;

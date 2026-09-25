@@ -71,6 +71,21 @@ export function generateWorld(cfg: SimConfig, rng: Rng): World {
   }
   normalize(elevation);
   normalize(moisture);
+  if (wc.island) {
+    // An island: land sinks into the sea toward the rim (the coast wobbles with the moisture noise).
+    const cx = (W - 1) / 2;
+    const cy = (H - 1) / 2;
+    const R = Math.min(W, H) / 2;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const r = Math.hypot(x - cx, y - cy) / R + (moisture[i] - 0.5) * 0.12;
+        const f = Math.min(1, Math.max(0, (r - wc.islandStart) / (0.97 - wc.islandStart)));
+        const k = f * f * (3 - 2 * f);
+        elevation[i] = elevation[i] * (1 - k) + (wc.lakeLevel - 0.2) * k;
+      }
+    }
+  }
 
   const biome = new Uint8Array(n);
   for (let i = 0; i < n; i++) {

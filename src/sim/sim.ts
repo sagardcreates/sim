@@ -31,7 +31,7 @@ import { provisionSystem } from './systems/provision';
 import { reproductionSystem } from './systems/reproduction';
 import { resourcesSystem } from './systems/resources';
 import { deepClone } from './util';
-import { playerSystem, snapshotPlayer, type PlayerState } from './play/player';
+import { playerSubStep, playerSystem, snapshotPlayer, type PlayerState } from './play/player';
 import { FlowFields } from './world/flowfield';
 import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
@@ -242,6 +242,7 @@ export class Simulation {
 
   /** One movement/work sub-step of the day (0..subStepsPerDay-1), then field encounters. */
   subStep(s: number): void {
+    if (this.player) playerSubStep(this, s);
     const order = this.shuffledLiving(this.rng.get('order'));
     movementSubStep(this, order, s, this.rng.get('movement'));
     fieldEncounters(this, this.rng.get('encounters'));

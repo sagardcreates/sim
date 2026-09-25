@@ -158,5 +158,5 @@ a { color: var(--teal); }
 
 .stat.warn { border-color: var(--red); color: #ffb3a6; }
 .beast .sub { margin-top: 2px; }
-#stat-body, #stat-skills { font-size: 13px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+#stat-body, #stat-skills, #stat-renown { font-size: 13px; margin-top: 3px; font-variant-numeric: tabular-nums; }
 .warn-text { color: #ffb3a6; }

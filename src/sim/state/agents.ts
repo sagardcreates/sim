@@ -128,6 +128,10 @@ export const AGENT_SCHEMA = {
   homeTileToday: 'i32',
   /** Play mode: stopped (called out to by the player) until this absolute sub-step (tick*subSteps+s). */
   heldUntil: 'i32',
+  /** Play mode: walking over to the player until this absolute sub-step. */
+  comeUntil: 'i32',
+  /** Play mode: walking with the player (companion) until this absolute sub-step. */
+  escortUntil: 'i32',
   /** Index into the MindStore pool while alive; -1 when dead. */
   slot: 'i32',
 } as const satisfies Record<string, ColumnKind>;

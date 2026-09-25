@@ -14,7 +14,11 @@ export type UiAction =
   | { kind: 'hunt'; tile: number; k: number }
   | { kind: 'wood' }
   | { kind: 'deposit' }
-  | { kind: 'build' };
+  | { kind: 'build' }
+  | { kind: 'walk'; target: number }
+  | { kind: 'dismiss'; target: number }
+  | { kind: 'court'; target: number }
+  | { kind: 'propose'; target: number };
 
 export type ToWorker =
   | { type: 'init'; seed: number; config?: DeepPartial<SimConfig> }
@@ -204,6 +208,13 @@ export interface PlayView {
   huntRange: number;
   animalTileRate: number;
   night: boolean;
+  renown: number;
+  female: boolean;
+  spouse: string;
+  /** People walking with you right now. */
+  companions: number[];
+  /** Felled trees: [tile, count] (they regrow). */
+  felled: [number, number][];
 }
 
 export interface LoadingMsg {
@@ -244,6 +255,12 @@ export interface PersonMsg {
   inYourClan: boolean;
   partner: string;
   children: number;
+  /** '' = not a match for you, 'yes' = you may court them, 'married' = your spouse. */
+  courtable: string;
+  courtship: number;
+  proposeOdds: number;
+  walkOdds: number;
+  withYou: boolean;
 }
 
 export type FromWorker = WorldMsg | DayMsg | InspectMsg | ClanInspectMsg | HashMsg | LoadingMsg | ActResultMsg | PlayStateMsg | PersonMsg;

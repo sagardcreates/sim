@@ -28,14 +28,14 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const SPEEDS: [string, number][] = [['❚❚', 0], ['1×', 1 / 30], ['2×', 1 / 15], ['4×', 1 / 7.5]];
 /** Walking speed in tiles per second on open ground. */
 const WALK = 3.4;
-const LABEL_RANGE = 13;
+const LABEL_RANGE = 16;
 /** Motives shown floating over heads: the ones the player can do something about, and leaders. */
 const FLOATING = new Set([1, 2, 3, 4, 5, 6, 7, 9, 11]);
 const MAX_LABELS = 14;
 
-const view = new TerrariumView($('canvas-host'));
-view.controls.enablePan = false;
-view.controls.mouseButtons = { LEFT: null, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.ROTATE } as unknown as typeof view.controls.mouseButtons;
+const view = new TerrariumView($('canvas-host'), { thirdPerson: true });
+view.controls.enabled = false;
+void MOUSE;
 let worker: SimChannel | undefined;
 let world: WorldMsg | undefined;
 let day: DayMsg | undefined;
@@ -78,6 +78,11 @@ async function mainThreadChannel(): Promise<SimChannel> {
 async function begin(): Promise<void> {
   const name = ($<HTMLInputElement>('in-name').value.trim() || 'Ashka').slice(0, 16);
   const seed = Math.max(1, Number($<HTMLInputElement>('in-seed').value) || 1);
+  try {
+    localStorage.setItem('terrarium-player', JSON.stringify({ name, female, seed }));
+  } catch {
+    /* no storage: fine */
+  }
   $('start').hidden = true;
   $('loading').hidden = false;
   try {
@@ -142,8 +147,9 @@ function arrive(): void {
   view.mode = 'follow';
   view.followId = play.playerId;
   view.focusOn(me.x, me.y);
-  view.camera.zoom = 4.5;
-  view.camera.updateProjectionMatrix();
+  view.dist = 6.5;
+  view.pitch = 0.42;
+  view.yaw = 0.6;
   setSpeed(SPEEDS[1][1]);
   toast(`You arrive alone and make camp. You found ${play.clanLabel}.`, 'good');
   toast('Watch the icons over people’s heads. Click someone to learn what they want; call out 📣 and they will wait for you.', '');
@@ -169,6 +175,7 @@ function onDay(d: DayMsg): void {
   $('date').textContent = `Year ${d.year} · ${season} · day ${d.dayOfYear}${d.climate.droughtActive ? ' · drought' : ''}${d.climate.epidemicActive ? ' · fever' : ''}`;
   for (const e of d.events) {
     if (e.type.startsWith('toast') && e.text) toast(e.text, e.type === 'toast-good' ? 'good' : e.type === 'toast-bad' ? 'bad' : '');
+    if (e.type === 'kill' && e.x !== undefined) view.addCarcass(e.x, e.y!, Number(e.text));
   }
   if (d.play) {
     setPlay(d.play);
@@ -180,6 +187,7 @@ function onDay(d: DayMsg): void {
 function setPlay(p: PlayView): void {
   const prev = play;
   play = p;
+  view.setFelled(p.felled);
   $('me').textContent = p.name;
   $('stat-clan').innerHTML = `<span style="color:${clanColor(p.clanId)}">■</span> ${esc(p.clanLabel)} · <b>${p.members}</b> people`;
   $('stat-rank').textContent = p.rank === 1 ? `Largest of ${p.clanCount} clans` : `#${p.rank} of ${p.clanCount} · largest ${p.largest.size}`;
@@ -187,6 +195,7 @@ function setPlay(p: PlayView): void {
   $('food-fill').style.width = `${(100 * p.carried) / p.carryCapacity}%`;
   $('stat-body').innerHTML = `${p.hunger > 0.5 ? '😫 starving' : p.hunger > 0.15 ? '😐 hungry' : '🙂 fed'} · ❤️ ${Math.round(100 * p.health)}%`;
   $('stat-body').className = p.hunger > 0.5 || p.health < 0.5 ? 'warn-text' : '';
+  $('stat-renown').innerHTML = `✨ Renown ${Math.round(100 * p.renown)}${p.spouse ? ` · 💍 ${esc(p.spouse)}` : ''}${p.companions.length ? ` · 🚶 ${p.companions.length} with you` : ''}`;
   $('stat-skills').textContent = `🏹 ${Math.round(100 * p.skills.hunt)} · 🌿 ${Math.round(100 * p.skills.gather)} · 🪓 ${Math.round(100 * p.skills.wood)} · 🪵 ${p.wood.toFixed(0)}`;
   $('btn-wood').innerHTML = `<kbd>C</kbd> Cut wood (${p.woodLeft})`;
   ($('btn-wood') as HTMLButtonElement).disabled = p.woodLeft <= 0;
@@ -278,6 +287,23 @@ const VERB_HINT: Record<HelpVerb, string> = {
   back: 'Promise to stand with them. Their enemy will hate you for it.',
 };
 
+/** Call over, walk together, courtship: the ways to spend time with someone. */
+function social(p: PersonMsg): string {
+  const first = esc(p.name.split(' ')[0]);
+  const out: string[] = [];
+  if (!p.withYou) out.push(`<button class="wide" data-hail disabled title="Call out: they come over to you">📣 Call ${first} over</button>`);
+  if (!p.inYourClan || p.courtable === 'married') {
+    out.push(p.withYou
+      ? `<button class="wide" data-dismiss data-able="1">🚶 ${first} is walking with you. Let them go home</button>`
+      : `<button class="wide" data-walk data-able="1" disabled title="Lead them somewhere quiet, away from watching eyes">🚶 Ask ${first} to walk with you (${Math.round(100 * p.walkOdds)}%)</button>`);
+  }
+  if (p.courtable === 'yes') {
+    out.push(`<button data-court data-able="1" disabled title="Spend time with them, sweetly">🌸 Court (${Math.round(100 * p.courtship)}%)</button>`);
+    out.push(`<button data-propose data-able="1" disabled title="Ask them to marry you: they would come to live at your camp">💍 Propose (${Math.round(100 * p.proposeOdds)}%)</button>`);
+  } else if (p.courtable === 'married') out.push('<p class="feel good wide">Your spouse.</p>');
+  return out.join('');
+}
+
 function renderCard(): void {
   const p = person;
   if (!p || !play) return;
@@ -304,7 +330,7 @@ function renderCard(): void {
     <div class="doing">Now: <b>${esc(p.doing)}</b>${p.why.length ? `<div class="why">because: ${p.why.map(esc).join(', ')}</div>` : ''}</div>
     ${p.motives.length ? `<ul class="motives">${p.motives.map((mo) => `<li>${MOTIVE_ICONS[mo.code]} ${esc(p.name.split(' ')[0])} ${esc(mo.text)}</li>`).join('')}</ul>` : '<p class="sub">Nothing troubles them right now.</p>'}
     <div class="feel ${feelCls}">${esc(p.name.split(' ')[0])} ${esc(feel.text)}.</div>
-    <div class="actions"><button class="wide" data-hail disabled title="Call out so they stop and wait for you">📣 Call out to ${esc(p.name.split(' ')[0])}</button>${buttons}${invite}</div>
+    <div class="actions">${social(p)}${buttons}${invite}</div>
     <div class="reach"><span class="reach-text"></span> <button data-approach hidden>Walk to them</button></div>`;
   if (html !== lastCardHtml) {
     lastCardHtml = html;
@@ -360,7 +386,7 @@ function updateReach(): void {
   const dist = pos ? Math.hypot(pos.x - me.x, pos.y - me.y) : Infinity;
   const inReach = dist <= play.interactRadius;
   const body = $('card-body');
-  for (const b of body.querySelectorAll<HTMLButtonElement>('button[data-able]')) b.disabled = b.dataset.able !== '1' || !inReach;
+  for (const b of body.querySelectorAll<HTMLButtonElement>('button[data-able]')) b.disabled = b.dataset.able !== '1' || (!inReach && !b.hasAttribute('data-dismiss'));
   const hailB = body.querySelector<HTMLButtonElement>('button[data-hail]');
   if (hailB) hailB.disabled = dist > play.hailRadius || play.night;
   const txt = body.querySelector('.reach-text');
@@ -382,6 +408,10 @@ $('card-body').addEventListener('click', (ev) => {
   }
   if (!b || selected < 0) return;
   if (b.hasAttribute('data-hail')) act({ kind: 'hail', target: selected });
+  else if (b.hasAttribute('data-walk')) act({ kind: 'walk', target: selected });
+  else if (b.hasAttribute('data-dismiss')) act({ kind: 'dismiss', target: selected });
+  else if (b.hasAttribute('data-court')) act({ kind: 'court', target: selected });
+  else if (b.hasAttribute('data-propose')) act({ kind: 'propose', target: selected });
   else if (b.dataset.verb) act({ kind: 'help', verb: b.dataset.verb as HelpVerb, target: selected });
   else if (b.hasAttribute('data-invite')) act({ kind: 'invite', target: selected });
   else if (b.hasAttribute('data-approach')) startApproach(selected);
@@ -527,6 +557,21 @@ function step(dt: number): void {
     }
   }
   me.anim += ((moving ? 1 : 0) - me.anim) * Math.min(1, dt * 8);
+  // Companions walk a step behind you (drawn client-side; the sim keeps them beside you too).
+  const comps = new Set(play?.companions ?? []);
+  for (const id of [...view.companions.keys()]) if (!comps.has(id)) view.companions.delete(id);
+  let ci = 0;
+  for (const id of comps) {
+    const side = ci++ % 2 === 0 ? 1 : -1;
+    const back = 0.9 + 0.5 * Math.floor(ci / 2);
+    const tx = me.x - Math.sin(me.heading) * back + Math.cos(me.heading) * 0.5 * side;
+    const ty = me.y - Math.cos(me.heading) * back - Math.sin(me.heading) * 0.5 * side;
+    const cur = view.companions.get(id) ?? view.positionOf(id) ?? { x: tx, y: ty };
+    const k = Math.min(1, dt * 3);
+    const nx = Math.hypot(tx - cur.x, ty - cur.y) > 8 ? tx : cur.x + (tx - cur.x) * k;
+    const ny = Math.hypot(tx - cur.x, ty - cur.y) > 8 ? ty : cur.y + (ty - cur.y) * k;
+    view.companions.set(id, { x: nx, y: ny });
+  }
   if (view.player) {
     view.player.x = me.x;
     view.player.y = me.y;
@@ -787,16 +832,28 @@ $('speeds').addEventListener('click', (ev) => {
   if (b) setSpeed(Number(b.dataset.dps));
 });
 
-let down: { x: number; y: number; t: number } | null = null;
+let down: { x: number; y: number; t: number; button: number; moved: number } | null = null;
 const canvas = view.renderer.domElement;
 canvas.addEventListener('pointerdown', (e) => {
-  if (e.button === 0) down = { x: e.clientX, y: e.clientY, t: performance.now() };
+  down = { x: e.clientX, y: e.clientY, t: performance.now(), button: e.button, moved: 0 };
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!down) return;
+  // Drag (any button) looks around.
+  const dx = e.movementX || 0;
+  const dy = e.movementY || 0;
+  down.moved += Math.abs(dx) + Math.abs(dy);
+  if (down.moved > 6) {
+    view.yaw -= dx * 0.006;
+    view.pitch = Math.max(-0.35, Math.min(1.25, view.pitch + dy * 0.004));
+  }
 });
 canvas.addEventListener('pointerup', (e) => {
-  if (!down || e.button !== 0 || !play) return;
-  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+  if (!down || !play) return;
+  const click = down.moved <= 6 && down.button === 0;
   down = null;
-  if (moved > 6) return;
+  if (!click) return;
   const id = view.pick(e.clientX, e.clientY);
   if (id >= 0 && id !== play.playerId) {
     select(id);
@@ -813,6 +870,10 @@ canvas.addEventListener('pointerup', (e) => {
     approachBeast = false;
   }
 });
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  view.dist = Math.max(0.4, Math.min(40, view.dist * Math.exp(e.deltaY * 0.0012)));
+}, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 window.addEventListener('keydown', (e) => {
@@ -857,7 +918,25 @@ $('btn-home').addEventListener('click', goHome);
 $('btn-clan').addEventListener('click', toggleClanPanel);
 $('btn-help').addEventListener('click', () => ($('howto').hidden = false));
 $('howto-close').addEventListener('click', () => ($('howto').hidden = true));
-$('btn-begin').addEventListener('click', () => void begin());
+$('btn-begin').addEventListener('click', () => {
+  if (new URLSearchParams(location.search).get('newworld') !== null) {
+    // Save the choices and start fresh in the chosen world.
+    try {
+      localStorage.setItem('terrarium-player', JSON.stringify({
+        name: ($<HTMLInputElement>('in-name').value.trim() || 'Ashka').slice(0, 16), female,
+        seed: Math.max(1, Number($<HTMLInputElement>('in-seed').value) || 1),
+      }));
+    } catch {
+      /* no storage */
+    }
+    location.href = location.pathname;
+    return;
+  }
+  void begin();
+});
+$('btn-newworld').addEventListener('click', () => {
+  location.href = `${location.pathname}?newworld=1`;
+});
 $('in-female').addEventListener('click', () => setSex(true));
 $('in-male').addEventListener('click', () => setSex(false));
 function setSex(f: boolean): void {
@@ -889,6 +968,7 @@ let lastCard = 0;
 function loop(): void {
   const now = performance.now();
   const dt = Math.min(0.25, (now - lastT) / 1000);
+  view.frameDt = dt;
   lastT = now;
   if (play) step(dt);
   view.frame();
@@ -907,7 +987,24 @@ requestAnimationFrame(loop);
 const params = new URLSearchParams(location.search);
 if (params.get('seed')) $<HTMLInputElement>('in-seed').value = params.get('seed')!;
 if (params.get('name')) $<HTMLInputElement>('in-name').value = params.get('name')!;
-if (params.get('autostart')) void begin();
+// The game starts at once (remembered name/sex/world, or a fresh world); "New world" is in the help panel.
+{
+  let saved: { name?: string; female?: boolean; seed?: number } = {};
+  try {
+    saved = JSON.parse(localStorage.getItem('terrarium-player') ?? '{}');
+  } catch {
+    /* no storage */
+  }
+  if (!params.get('name') && saved.name) $<HTMLInputElement>('in-name').value = saved.name;
+  if (saved.female === false) setSex(false);
+  if (!params.get('seed')) $<HTMLInputElement>('in-seed').value = String(saved.seed ?? 1 + Math.floor(Math.random() * 9999));
+  if (params.get('newworld') === null) void begin();
+  else {
+    $('loading').hidden = true;
+    $('start').hidden = false;
+    $<HTMLInputElement>('in-seed').value = String(1 + Math.floor(Math.random() * 9999));
+  }
+}
 if (params.get('autostart')) {
   // Test hook (screenshots / scripted play-throughs only).
   (window as unknown as { __terrarium: unknown }).__terrarium = {

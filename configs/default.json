@@ -58,7 +58,9 @@
         "gameDensity": 0.0
       }
     },
-    "waterAccessRadius": 3
+    "waterAccessRadius": 3,
+    "island": false,
+    "islandStart": 0.72
   },
   "climate": {
     "seasonAmplitude": 0.35,
@@ -479,7 +481,10 @@
       "back": 0.2,
       "invite": 0.35,
       "defection": 0.15,
-      "refusalReport": 0.3
+      "refusalReport": 0.3,
+      "walk": 0.12,
+      "court": 0.1,
+      "propose": 0.3
     },
     "leaderWitnessFactor": 3,
     "friendlyWitnessFactor": 0.3,
@@ -518,6 +523,25 @@
     "playerNeed": 1.0,
     "hungerPerMissedDay": 0.25,
     "playerHealPerNight": 0.05,
-    "huntRange": 3.2
+    "huntRange": 3.2,
+    "world": {
+      "width": 112,
+      "height": 112,
+      "island": true
+    },
+    "comeSubSteps": 4,
+    "escortSubSteps": 4,
+    "renownDecayPerDay": 0.003,
+    "renownInviteWeight": 3,
+    "renownGift": 0.02,
+    "renownTend": 0.03,
+    "renownBigKill": 0.03,
+    "visitRange": 14,
+    "visitChancePerSubStep": 0.35,
+    "courtAffinity": 0.1,
+    "courtStep": 0.18,
+    "proposeAt": 0.6,
+    "treesPerTile": 2,
+    "treeRegrowDays": 120
   }
 }

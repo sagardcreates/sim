@@ -44,6 +44,8 @@ export type EventType =
   | 'history.overtake'
   | 'history.first'
   | 'agent.drifter'
+  | 'player.kill'
+  | 'player.visit'
   | 'player.caught'
   | 'player.raid';
 
