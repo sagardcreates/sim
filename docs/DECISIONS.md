@@ -140,6 +140,8 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-25 · Renderer invariance** is verified by test: a run driven through the worker host, with render buffers, event capture, inspector queries and snapshots, gives the same state hash as a headless run. Speed only changes how many whole days are stepped per wall-clock second, never what a day computes.
 - **2026-09-25 · Performance measurement caveat.** This container only has a software rasterizer (SwiftShader), so GPU frame rates can't be measured here. Measured: main-thread JavaScript per frame at 1,000 agents is about 2–3 ms, under a 16.7 ms frame budget, on a loaded 4-core CPU. At world zoom, people are one point-sprite draw call.
 
+- **2026-09-25 · Migration streams.** The worker forwards `camp_moved` and `joined_clan` day events with from/to positions. The view draws a brief arc between them that fades over 8 s of wall time, so relocations and clan switches read as flows. This is purely observational: the renderer receives copies and never writes sim state.
+
 ## M6 — Historian
 
 - **2026-09-25 · Named stories are labels over primitive events,** emitted yearly as `history.*` events whose causes point at the justifying primitives: alliance (mutual clan affinity > 0.05 for 2+ years plus an intermarriage), feud (≥3 killings between two clans in 10 years with killings in both directions; "blood feud" if within one clan), famine, regime type, overtake, and "firsts". Fission and dissolution are primitive events.
@@ -156,3 +158,8 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-25 · Outcome metrics are computed after the fact** from the event log, stats and pedigree (`Simulation.acceptanceMetrics`), never read by systems. That keeps §0.3: no outcome variable feeds back into its own inputs.
 - **2026-09-25 · Marker patterns expanded to 1,024 ids** so innovations are traceable: few collisions, so "survived" means the pattern itself persisted.
 - **2026-09-25 · Pilot sizes.** Full experiments (50 seeds × 300 years × variants; 200 seeds for contingency) take many CPU-hours at the current ~2 s per sim-year for ~250 agents. The harness supports them. The reports committed here come from pilot runs with fewer seeds and years, and say so.
+
+## Performance (§14)
+
+- **2026-09-25 · `npm run perf` holds density constant.** Packing 1,000 or 2,000 people onto the 96² map crashed the populations to 661 and 277 within the warmup year, so the timed windows measured famines. The benchmark now scales the map side with √(target/200) and the clan count linearly, keeping 50 people per clan. Result: about 29 µs per agent-day, linear from 200 to 2,000 agents (docs/PERFORMANCE.md).
+- **2026-09-25 · No further micro-optimisation for now.** The CPU profile is flat: GC takes 8% and no function takes more than about 5% of self time. There is no single hotspot to remove, and batch throughput comes from the per-seed worker pool instead.
