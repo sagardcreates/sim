@@ -1,5 +1,15 @@
 /** Messages between the UI thread and the sim worker. The UI never touches sim state. */
 import type { DeepPartial, SimConfig } from '../sim/config';
+import type { HelpVerb } from '../sim/play/player';
+import type { Motive } from '../sim/play/motives';
+
+/** A player action as the UI expresses it; the host resolves proximity and witnesses. */
+export type UiAction =
+  | { kind: 'gather' }
+  | { kind: 'take'; amount: number }
+  | { kind: 'help'; verb: HelpVerb; target: number }
+  | { kind: 'invite'; target: number }
+  | { kind: 'raid'; clan: number };
 
 export type ToWorker =
   | { type: 'init'; seed: number; config?: DeepPartial<SimConfig> }
@@ -10,7 +20,14 @@ export type ToWorker =
   /** Run (synchronously) to a tick and report the state hash (tests / verification). */
   | { type: 'runTo'; tick: number }
   /** Jump to the yearly snapshot at or before `year` (timeline scrubbing). */
-  | { type: 'scrub'; year: number };
+  | { type: 'scrub'; year: number }
+  /** Play mode: build a world, let it run `warmupYears`, then put the player in it. */
+  | { type: 'play'; seed: number; name: string; female: boolean; warmupYears?: number }
+  /** Player position (sent often; client-side movement). */
+  | { type: 'pos'; x: number; y: number }
+  /** A player action; `subStep` is the frame the player was looking at (for proximity and witnesses). */
+  | { type: 'act'; action: UiAction; subStep: number }
+  | { type: 'person'; id: number };
 
 export interface WorldMsg {
   type: 'world';
@@ -101,6 +118,11 @@ export interface DayMsg {
   /** Years for which a snapshot is available (timeline scrubbing). */
   snapshotYears: number[];
   yearly: { year: number; population: number; clans: { id: number; size: number }[]; killings: number; births: number }[];
+  /** Play mode only. */
+  play?: PlayView;
+  /** Play mode: primary motive code per agent (aligned with ids) and their affinity toward the player. */
+  motives?: Uint8Array;
+  friendly?: Float32Array;
 }
 
 export interface InspectMsg {
@@ -131,4 +153,72 @@ export interface HashMsg {
   hash: string;
 }
 
-export type FromWorker = WorldMsg | DayMsg | InspectMsg | ClanInspectMsg | HashMsg;
+export interface PlayView {
+  playerId: number;
+  name: string;
+  clanId: number;
+  clanLabel: string;
+  x: number;
+  y: number;
+  campX: number;
+  campY: number;
+  carried: number;
+  carryCapacity: number;
+  store: number;
+  members: number;
+  adults: number;
+  rank: number;
+  clanCount: number;
+  largest: { label: string; size: number };
+  suspicion: { clan: number; label: string; value: number }[];
+  raids: { clan: number; label: string; size: number; odds: number; ok: boolean; reason: string; x: number; y: number }[];
+  raidPlanned: number;
+  gathersLeft: number;
+  caught: number;
+  raidsWon: number;
+  raidsLost: number;
+  interactRadius: number;
+  witnessRadius: number;
+}
+
+export interface LoadingMsg {
+  type: 'loading';
+  year: number;
+  total: number;
+  lines: string[];
+}
+
+export interface ActResultMsg {
+  type: 'actResult';
+  ok: boolean;
+  text: string;
+  seenBy: { clan: number; label: string; amount: number; witnesses: number }[];
+}
+
+export interface PlayStateMsg {
+  type: 'playState';
+  play: PlayView;
+}
+
+export interface PersonMsg {
+  type: 'person';
+  id: number;
+  name: string;
+  alive: boolean;
+  clan: number;
+  clanLabel: string;
+  age: number;
+  female: boolean;
+  isLeader: boolean;
+  doing: string;
+  why: string[];
+  motives: Motive[];
+  feeling: { text: string; aff: number; def: number; grudge: number };
+  help: HelpVerb[];
+  invite: { p: number; parts: { label: string; value: number }[] } | null;
+  inYourClan: boolean;
+  partner: string;
+  children: number;
+}
+
+export type FromWorker = WorldMsg | DayMsg | InspectMsg | ClanInspectMsg | HashMsg | LoadingMsg | ActResultMsg | PlayStateMsg | PersonMsg;

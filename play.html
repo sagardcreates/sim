@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Terrarium: Found a Clan</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Marcellus&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/ui/play.css" />
+  </head>
+  <body>
+    <div id="stage"><div id="canvas-host"></div><div id="labels"></div></div>
+
+    <header id="hud-top">
+      <div class="who"><div class="brand">Terrarium</div><div id="me">—</div></div>
+      <div class="stat" id="stat-clan" title="Your clan">—</div>
+      <div class="stat" id="stat-rank" title="Clans ranked by size">—</div>
+      <div class="stat food" title="Food in your hands / your camp store"><span id="stat-food">—</span><span class="bar"><span id="food-fill"></span></span></div>
+      <div class="spacer"></div>
+      <div class="date" id="date">—</div>
+      <div class="group" id="speeds" role="group" aria-label="Game speed"></div>
+      <button id="btn-help" title="How to play (H)">?</button>
+    </header>
+
+    <aside id="watch" aria-label="How other clans see you">
+      <div class="label">Suspicion</div>
+      <div id="suspicion"></div>
+      <div id="watchers"></div>
+    </aside>
+
+    <aside id="card" hidden>
+      <div class="card-head"><h2 id="card-name">—</h2><button id="card-close" aria-label="Close">×</button></div>
+      <div id="card-body"></div>
+    </aside>
+
+    <aside id="clanpanel" hidden>
+      <div class="card-head"><h2>Your clan &amp; raids</h2><button id="clan-close" aria-label="Close">×</button></div>
+      <div id="clan-body"></div>
+    </aside>
+
+    <footer id="hud-bottom">
+      <button id="btn-gather" title="Gather food where you stand (G)"><kbd>G</kbd> Gather</button>
+      <button id="btn-take" title="Take food from your camp store (at camp) (F)"><kbd>F</kbd> Take from store</button>
+      <button id="btn-home" title="Walk back to your camp (B)"><kbd>B</kbd> Go home</button>
+      <button id="btn-clan" title="Your clan and raids (R)"><kbd>R</kbd> Clan &amp; raids</button>
+      <div id="hint">WASD / arrows or click the ground to walk · click a person · right-drag to turn · wheel to zoom</div>
+    </footer>
+
+    <ol id="toasts" aria-live="polite"></ol>
+
+    <div id="start" class="screen">
+      <div class="panel">
+        <div class="brand big">Terrarium</div>
+        <h1>Found a clan</h1>
+        <p>You walk into a valley where clans have lived for generations. They forage, hunt, share, love, feud and follow their leaders, each for reasons of their own.</p>
+        <p>You come alone. Learn what people want, help them, and win them to your side. But court a clan's people where they can see you, and they will come for yours.</p>
+        <div class="form">
+          <label>Your name <input id="in-name" value="Ashka" maxlength="16" /></label>
+          <div class="group" role="radiogroup" aria-label="You are">
+            <button id="in-female" class="active" aria-pressed="true">Woman</button><button id="in-male" aria-pressed="false">Man</button>
+          </div>
+          <label>World <input id="in-seed" type="number" value="1" min="1" /></label>
+        </div>
+        <button id="btn-begin" class="primary">Enter the valley</button>
+        <p class="small"><a href="./index.html">Or just watch the world →</a></p>
+      </div>
+    </div>
+
+    <div id="loading" class="screen" hidden>
+      <div class="panel">
+        <h1>The valley before you</h1>
+        <div class="progress"><span id="load-fill"></span></div>
+        <p class="small" id="load-year">—</p>
+        <ol id="load-lines"></ol>
+      </div>
+    </div>
+
+    <div id="howto" class="screen" hidden>
+      <div class="panel wide">
+        <h1>How to play</h1>
+        <ul>
+          <li><b>Move</b> with WASD / arrow keys, or click the ground. Right-drag turns the camera; the wheel zooms.</li>
+          <li><b>Read people.</b> Icons over heads show what they want: 🍖 hungry, 🍼 children hungry, 🩹 wounded, 🤒 unwell, 🗡️ wants revenge, 😞 unhappy in their clan, 💬 lonely, 💞 seeks a partner, 👑 leader, ⭐ has a following. Click someone to see what they are doing and why.</li>
+          <li><b>Help them</b> when you are close (inner ring): talk, give food, tend wounds, or back their grudge. Each builds real affection and respect toward you.</li>
+          <li><b>Invite</b> them to your clan. They decide the way everyone here does, weighing their ties to you and your people against their ties at home. Lonely, unhappy and hungry people come easiest, and their partners and children may follow.</li>
+          <li><b>Be careful who sees.</b> Anyone of their clan inside the red ring notices you courting their people; their leader counts most. When a clan's suspicion fills, they come at night and <b>kill five of your people</b>. Suspicion fades with time.</li>
+          <li><b>Food</b>: gather it (G) or take it from your camp's store (F), which your people fill.</li>
+          <li><b>Raid</b> (R) once you have five grown fighters: steal a clan's store, and pay in blood. Every killing leaves grudges, and grudges lead to feuds.</li>
+          <li><b>Goal</b>: make your clan the largest in the valley.</li>
+        </ul>
+        <button id="howto-close" class="primary">Got it</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/ui/play.ts"></script>
+  </body>
+</html>

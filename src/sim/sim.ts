@@ -31,12 +31,13 @@ import { provisionSystem } from './systems/provision';
 import { reproductionSystem } from './systems/reproduction';
 import { resourcesSystem } from './systems/resources';
 import { deepClone } from './util';
+import { playerSystem, snapshotPlayer, type PlayerState } from './play/player';
 import { FlowFields } from './world/flowfield';
 import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm6.1';
+export const CODE_VERSION = 'm8.0';
 
 export interface Grave {
   id: number;
@@ -64,6 +65,8 @@ export class Simulation {
   graves: Grave[] = [];
   /** Historian's running state (labels are part of history, so this is state). */
   historian: HistorianState = initialHistorian();
+  /** Play mode: the human player's state (null in research runs). */
+  player: PlayerState | null = null;
   // --- caches / derived (not state; rebuilt deterministically) ---
   fields: FlowFields;
   spatial: SpatialHash;
@@ -234,7 +237,12 @@ export class Simulation {
       this.onSubStep?.(this, s);
     }
     drinkAtNight(this);
+    // The player's hand-held food is theirs to give; provisioning doesn't touch it.
+    const pid = this.player ? this.player.id : -1;
+    const held = pid >= 0 ? this.agents.cols.carriedFood[pid] : 0;
+    if (pid >= 0) this.agents.cols.carriedFood[pid] = 0;
     provisionSystem(this);
+    if (pid >= 0) this.agents.cols.carriedFood[pid] += held;
     nightSocialSystem(this);
     reproductionSystem(this);
     epidemicSystem(this);
@@ -243,6 +251,7 @@ export class Simulation {
     this.rebuildDerived();
     campSystem(this);
     clanMembershipSystem(this);
+    playerSystem(this);
     deferenceDriftSystem(this);
     challengeSystem(this);
     cultureSystem(this);
@@ -500,6 +509,7 @@ export class Simulation {
     h.string(stableStringify(this.historian));
     h.string(stableStringify(this.rng.getState()));
     h.number(this.events.nextId);
+    if (this.player) h.string(stableStringify(this.player));
     return h.digest();
   }
 
@@ -522,6 +532,7 @@ export class Simulation {
       climate: deepClone(this.climate),
       graves: deepClone(this.graves),
       historian: deepClone(this.historian),
+      player: snapshotPlayer(this.player),
       rng: this.rng.getState(),
       stats: { day: deepClone(this.stats.day), years: deepClone(this.stats.years) },
       statusCache: {
@@ -566,6 +577,7 @@ export class Simulation {
     sim.climate = deepClone(snap.climate);
     sim.graves = deepClone(snap.graves);
     sim.historian = deepClone(snap.historian);
+    sim.player = snapshotPlayer(snap.player ?? null);
     sim.rng.setState(snap.rng);
     sim.stats.day = deepClone(snap.stats.day);
     sim.stats.years = deepClone(snap.stats.years);
@@ -584,6 +596,7 @@ export class Simulation {
         break;
       }
     }
+    if (sim.player) sim.leaders.set(sim.player.clanId, sim.player.id);
     for (const e of sim.events.macro.values()) {
       if (e.type === 'leader.challenged') sim.lastChallenge.set(e.clans![0], e.id);
       if (e.type === 'agent.died') sim.deathEvent.set(e.agents![0], e.id);
@@ -610,6 +623,7 @@ export interface SimSnapshot {
   climate: ClimateState;
   graves: Grave[];
   historian: HistorianState;
+  player?: PlayerState | null;
   rng: Record<string, RngState>;
   stats: { day: DayCounters; years: YearStats[] };
   statusCache: { status: number[]; clanDeference: number[]; clanDefTotal: [number, number][] };

@@ -7,6 +7,7 @@
  * Dependents: nursing infants are carried by their mother; young children
  * stay at camp; older children follow a caregiver (seen setting out).
  */
+import { playerId } from '../play/player';
 import type { Simulation } from '../sim';
 import {
   GOAL_AVENGE, GOAL_CARE, GOAL_CARRIED, GOAL_FOLLOW, GOAL_FORAGE, GOAL_HUNT, GOAL_REST, GOAL_SOCIALIZE, NO_ID,
@@ -68,7 +69,15 @@ export function decisionSystem(sim: Simulation): void {
   const adults: number[] = [];
   const followers: number[] = [];
 
+  const pid = playerId(sim);
   for (const id of order) {
+    if (id === pid) {
+      // The player moves by their own hand (see play/player.ts).
+      c.goal[id] = GOAL_REST;
+      c.phase[id] = PHASE_HOME;
+      c.followId[id] = NO_ID;
+      continue;
+    }
     c.homeTileToday[id] = homeTile(sim, id);
     c.followId[id] = NO_ID;
     c.partyLeader[id] = NO_ID;

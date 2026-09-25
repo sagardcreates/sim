@@ -112,3 +112,6 @@ svg text { font-family: var(--ui); }
   .date { min-width: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+
+.play-link { font: 600 13px var(--ui); color: #1b1407; background: var(--ochre); border-radius: 6px; padding: 4px 10px; text-decoration: none; }
+.play-link:hover { background: #e8b556; }

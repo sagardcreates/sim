@@ -284,6 +284,8 @@ export function describe(sim: Simulation, e: SimEvent): string {
     case 'history.famine': return `Year ${y}: famine — ${d.starved} starved.`;
     case 'history.regime': return `Year ${y}: ${cl(e.clans![0])} became ${article(String(d.regime))} ${d.regime}${d.previous ? ` (was ${d.previous})` : ''}.`;
     case 'history.overtake': return `Year ${y}: ${cl(e.clans![0])} overtook ${cl(e.clans![1])} as the largest clan (${d.size}).`;
+    case 'player.caught': return `Year ${y}: ${cl(e.clans![0])} caught ${n(e.agents![0])} courting their people${d.killed ? ` and killed ${d.killed} of ${cl(e.clans![1])}` : ' and beat them'}.`;
+    case 'player.raid': return `Year ${y}: ${cl(e.clans![0])} raided ${cl(e.clans![1])} and ${d.won ? `won (took ${d.loot} food)` : 'was driven off'}.`;
     case 'history.first': {
       const cause = e.causes.length ? sim.events.get(e.causes[0]) : undefined;
       return `Year ${y}: the ${d.what}${cause ? `: ${describe(sim, cause).replace(/^Year \d+: /, '').replace(/\.$/, '')}` : ''}.`;

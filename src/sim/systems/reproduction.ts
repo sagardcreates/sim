@@ -5,6 +5,7 @@
  * inheritance (midparent + segregation noise + mutation; phenotype adds
  * developmental noise), and naming.
  */
+import { playerId } from '../play/player';
 import type { Simulation } from '../sim';
 import type { Rng } from '../rng';
 import { makePersonName } from '../names';
@@ -26,8 +27,9 @@ export function reproductionSystem(sim: Simulation): void {
   const rng = sim.rng.get('reproduction');
   const tick = sim.tick;
   const order = sim.shuffledLiving(rng);
+  const pid = playerId(sim);
   for (const id of order) {
-    if (!c.alive[id] || c.sex[id] !== SEX_FEMALE) continue;
+    if (!c.alive[id] || c.sex[id] !== SEX_FEMALE || id === pid) continue;
     const age = ageYears(sim, id);
     const st = c.repState[id];
     if (st === REP_NONE) {
@@ -182,7 +184,7 @@ function pairing(sim: Simulation, rng: Rng): void {
   const rc = sim.cfg.reproduction;
   const l = sim.cfg.life;
   const sc = sim.cfg.social;
-  const eligible = (id: number) => c.alive[id] === 1 && !isAlive(sim, c.partnerId[id]) && ageYears(sim, id) >= l.pairMinAgeYears;
+  const eligible = (id: number) => c.alive[id] === 1 && id !== playerId(sim) && !isAlive(sim, c.partnerId[id]) && ageYears(sim, id) >= l.pairMinAgeYears;
   for (const f of sim.shuffledLiving(rng)) {
     if (c.sex[f] !== SEX_FEMALE || !eligible(f) || !rng.chance(rc.pairingDailyProb)) continue;
     const seen = new Set<number>();

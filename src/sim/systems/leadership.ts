@@ -9,6 +9,7 @@
  * share of clan deference above a threshold) and never stored. Challenges,
  * succession and leader-change records live here; regime type is a historian label.
  */
+import { isPlayerClan } from '../play/player';
 import type { Simulation } from '../sim';
 import { NO_ID } from '../state/agents';
 import { ageYears, isAlive, strength } from './common';
@@ -82,6 +83,7 @@ export function leadershipSystem(sim: Simulation): void {
   computeStatus(sim);
   const clanDef = sim.clanDeference;
   for (const clan of sim.clans.extant()) {
+    if (isPlayerClan(sim, clan.id)) continue; // the player leads their own clan
     const members = sim.clanMembers.get(clan.id) ?? [];
     let total = 0;
     let best = NO_ID;
@@ -231,7 +233,7 @@ export function challengeSystem(sim: Simulation): void {
   const rng = sim.rng.get('challenge');
   for (const clan of sim.clans.extant()) {
     const L = sim.leaders.get(clan.id);
-    if (L === undefined || !isAlive(sim, L)) continue;
+    if (L === undefined || !isAlive(sim, L) || isPlayerClan(sim, clan.id)) continue;
     const members = sim.clanMembers.get(clan.id) ?? [];
     const cands: number[] = [];
     const vals: number[] = [0]; // index 0 = nobody challenges

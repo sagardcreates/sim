@@ -170,3 +170,22 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 
 - **2026-09-25 · `npm run perf` holds density constant.** Packing 1,000 or 2,000 people onto the 96² map crashed the populations to 661 and 277 within the warmup year, so the timed windows measured famines. The benchmark now scales the map side with √(target/200) and the clan count linearly, keeping 50 people per clan. Result: about 29 µs per agent-day, linear from 200 to 2,000 agents (docs/PERFORMANCE.md).
 - **2026-09-25 · No further micro-optimisation for now.** The CPU profile is flat: GC takes 8% and no function takes more than about 5% of self time. There is no single hotspot to remove, and batch throughput comes from the per-seed worker pool instead.
+
+## Play mode (after M7, at the user's request)
+
+- **2026-09-25 · The player is an ordinary agent** with a clan of their own (`src/sim/play/player.ts`). They act only through existing primitives:
+  - gifts (`onGift`) and relationship updates;
+  - the clan-membership move (`moveClan`) and the shared clan valuation (`clanValue`);
+  - killings (`killAgent` + `onKilling`).
+
+  The world therefore reacts with its own mechanisms: grudges from a raid feed real feuds, and a recruit's partner weighs following them with the usual rule.
+- **2026-09-25 · Determinism is kept by logging resolved actions.** The UI moves the avatar client-side (responsive) and sends positions and actions. The host resolves each action against the frame the player was looking at (proximity, witnesses) and applies it between days. The resolved action, witnesses included, is logged with its tick, so `(seed, config, action log)` replays exactly (`replay()`, tested). The same log is the unit a multiplayer version would exchange.
+- **2026-09-25 · Exemptions for the player agent:** decisions, metabolism, mortality, pairing, clan switching, expulsion, fission of their clan, derived leadership (the player leads their clan) and direct fights. These are game-design choices kept explicit in the code with guards. Research runs have no player, so their behaviour is unchanged, though CODE_VERSION was bumped to m8.0.
+- **2026-09-25 · Getting caught (user's rule: "lose five clan members").** Courting a clan's people raises that clan's suspicion by verb weight × witnesses:
+  - the leader counts ×3; friends of the player count ×0.3;
+  - witness weight saturates, so a camp full of eyes is dangerous but not instant doom;
+  - a loyal refuser may report an invite, and every defection is noticed.
+
+  At the threshold the clan strikes at night. Its leader kills up to 5 of the player's people, adults first; with no people to take, they beat the player instead. These are real killings with grudges. Suspicion fades about 2% per day.
+- **2026-09-25 · Invite odds use the everyone-uses clan valuation plus the target's regard for the player** (affinity ×6, deference ×4, grudge −2). In the world, own-clan loyalty runs 6–14 (kin ties dominate), so without the regard term no one would ever leave. With it, per the balance check, befriending the least-attached person takes about 10 days to reach 70%, and a median person 30–40 days. Recruiting whole families cascades naturally: kin already with you pull the rest.
+- **2026-09-25 · Raids** (5+ grown fighters, 20-day cooldown) resolve at night. Win probability is A²/(A²+D²) with a 1.25 home bonus. A win takes 60% of the target's store. Both sides lose people (real killings), and the target clan turns openly hostile.

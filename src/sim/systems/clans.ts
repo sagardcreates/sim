@@ -11,6 +11,7 @@
  *  - Yearly: expulsion; fission via community detection when a clan is large
  *    relative to local carrying capacity and internally split.
  */
+import { isPlayer, isPlayerClan } from '../play/player';
 import type { Simulation } from '../sim';
 import type { Rng } from '../rng';
 import { makeClanName, makeSyllableSet } from '../names';
@@ -82,6 +83,7 @@ export function acceptProb(sim: Simulation, i: number, k: number): number {
   const cc = sim.cfg.clans;
   const members = sim.clanMembers.get(k) ?? [];
   if (members.length === 0) return 0;
+  if (isPlayerClan(sim, k)) return 1; // the player welcomes anyone who comes
   let affSum = 0;
   let affN = 0;
   let trust = 0;
@@ -155,6 +157,10 @@ export function moveClan(sim: Simulation, i: number, to: number, reason: string,
     c.homeTileToday[m] = sim.homeTileOf(m);
     if (c.phase[m] === PHASE_HOME) placeAtHome(sim, m);
   }
+  // Defection to the player is noticed by the clan left behind.
+  if (sim.player && to === sim.player.clanId && from !== LONER) {
+    sim.player.suspicion[from] = (sim.player.suspicion[from] ?? 0) + sim.cfg.play.suspicion.defection;
+  }
   let ev = leaveEv;
   if (to !== LONER) {
     ev = sim.events.emit(sim.tick, {
@@ -188,7 +194,7 @@ export function clanMembershipSystem(sim: Simulation): void {
   const rng = sim.rng.get('clans');
   const period = cc.loyaltyCheckDays;
   for (const i of sim.shuffledLiving(rng)) {
-    if (!c.alive[i] || (i + sim.tick) % period !== 0) continue;
+    if (!c.alive[i] || (i + sim.tick) % period !== 0 || isPlayer(sim, i)) continue;
     if (ageYears(sim, i) < sim.cfg.life.independentAgeYears) continue;
     const own = c.clanId[i];
     const ownVal = own === LONER ? cc.lonerValue : clanValue(sim, i, own);
@@ -252,7 +258,7 @@ function expulsion(sim: Simulation): void {
     if (members.length < 4) continue;
     const top = sim.topStatus(clan.id, 3);
     for (const i of members) {
-      if (top.includes(i)) continue;
+      if (top.includes(i) || isPlayer(sim, i)) continue;
       let sum = 0;
       let n = 0;
       for (const j of members) {
@@ -295,6 +301,7 @@ function fission(sim: Simulation, clanId: number, rng: Rng): void {
   const c = sim.agents.cols;
   const cc = sim.cfg.clans;
   const clan = sim.clans.get(clanId)!;
+  if (isPlayerClan(sim, clanId)) return; // the player's clan stays whole
   const members = sim.clanMembers.get(clanId) ?? [];
   if (members.length < cc.fissionMinSize) return;
   const cap = localCapacity(sim, clan.campX, clan.campY);

@@ -62,6 +62,11 @@ export class TerrariumView {
   private colorCache = new Map<number, { skin: THREE.Color; hair: THREE.Color; cloth: THREE.Color; dotClan: THREE.Color; dotGoal: THREE.Color }>();
   /** Milliseconds of JS spent building instances last frame (excludes GPU). */
   lastBuildMs = 0;
+  /** Play mode: the player's avatar is drawn where the player's own controls put it (client-side). */
+  player: { id: number; x: number; y: number; heading: number; speed: number; gesture: number } | null = null;
+  private playerRing?: THREE.Mesh;
+  private reachRing?: THREE.Mesh;
+  private sightRing?: THREE.Mesh;
   /** Screen position of the followed agent (for the thought bubble), or null. */
   followScreen: { x: number; y: number } | null = null;
 
@@ -247,6 +252,7 @@ export class TerrariumView {
       const pulse = 1 + 0.15 * Math.sin(time * 5);
       this.selectionRing.scale.setScalar(pulse * (lod ? 2.5 : 1));
     }
+    this.updatePlayerRings(time);
     // Follow-cam.
     this.followScreen = null;
     if (this.mode === 'follow' && this.followId >= 0) {
@@ -281,7 +287,7 @@ export class TerrariumView {
     const pos: [number, number][] = [];
     for (let i = 0; i < n; i++) {
       index.set(d.ids[i], i);
-      pos.push(this.positionAt(d, i, f));
+      pos.push(this.player && d.ids[i] === this.player.id ? [this.player.x, this.player.y] : this.positionAt(d, i, f));
     }
     const campOf = new Map(d.clans.map((c) => [c.id, c]));
     const leaders: HumanInstance[] = [];
@@ -295,8 +301,9 @@ export class TerrariumView {
       const id = d.ids[i];
       const age = A[o + A_AGE];
       let [x, y] = pos[i];
+      const isMe = this.player !== null && id === this.player.id;
       // Heading from motion; at camp, face the fire.
-      const [x2, y2] = this.positionAt(d, i, Math.min(d.subSteps - 1, f + 0.25));
+      const [x2, y2] = isMe ? [x, y] : this.positionAt(d, i, Math.min(d.subSteps - 1, f + 0.25));
       const dx = x2 - x;
       const dy = y2 - y;
       const moving = Math.hypot(dx, dy) > 0.01;
@@ -310,9 +317,15 @@ export class TerrariumView {
       const g = this.gestures.get(id);
       if (g && g.until > now) gesture = g.code;
       else if (g) this.gestures.delete(id);
+      if (isMe) {
+        heading = this.player!.heading;
+        this.headings.set(id, heading);
+        gesture = gesture || this.player!.gesture;
+        scale *= 1.08;
+      }
       // Infants ride on their mother.
       const mom = A[o + A_FOLLOW];
-      let speed = moving ? Math.min(1, Math.hypot(dx, dy) * 3) : 0;
+      let speed = isMe ? this.player!.speed : moving ? Math.min(1, Math.hypot(dx, dy) * 3) : 0;
       if (mom >= 0 && index.has(mom)) {
         const mi = index.get(mom)!;
         const mh = this.headings.get(mom) ?? heading;
@@ -322,7 +335,7 @@ export class TerrariumView {
         heading = mh;
         scale *= 0.8;
         speed = 0;
-      } else if (!moving && this.daysPerSecond > 0 && this.daysPerSecond <= 2 && this.daylight() < 0.45 && clan) {
+      } else if (!isMe && !moving && this.daysPerSecond > 0 && this.daysPerSecond <= 2 && this.daylight() < 0.45 && clan) {
         gesture = gesture || G_SIT; // evening gathering around the fire
       }
       const lift = mom >= 0 && index.has(mom) ? 0.35 : 0;
@@ -382,6 +395,91 @@ export class TerrariumView {
         (l.material as THREE.LineBasicMaterial).opacity = 0.9 * (1 - age);
       }
     }
+  }
+
+  /** Play mode: rings under the player (you), your reach, and how far eyes can see you. */
+  setPlayerRings(reach: number, sight: number, color: string): void {
+    const mk = (r0: number, r1: number, c: string, o: number) => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(r0, r1, 64), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, depthTest: false }));
+      m.rotation.x = -Math.PI / 2;
+      m.renderOrder = 9;
+      this.scene.add(m);
+      return m;
+    };
+    for (const m of [this.playerRing, this.reachRing, this.sightRing]) if (m) this.scene.remove(m);
+    this.playerRing = mk(0.3, 0.45, color, 0.95);
+    this.reachRing = mk(reach - 0.05, reach, '#f3e7c9', 0.35);
+    this.sightRing = mk(sight - 0.08, sight, '#e0624d', 0.18);
+  }
+
+  private updatePlayerRings(time: number): void {
+    const p = this.player;
+    for (const m of [this.playerRing, this.reachRing, this.sightRing]) if (m) m.visible = !!p && !!this.terrain;
+    if (!p || !this.terrain) return;
+    const h = this.terrain.heightAt(p.x, p.y) + 0.04;
+    this.playerRing?.position.set(p.x, h, p.y);
+    this.reachRing?.position.set(p.x, h, p.y);
+    this.sightRing?.position.set(p.x, h, p.y);
+    this.playerRing?.scale.setScalar(1 + 0.1 * Math.sin(time * 4));
+  }
+
+  /** Current fractional sub-step being shown (what the player sees). */
+  shownSubStep(): number {
+    return this.cur ? Math.round(this.phase(this.cur)) : 0;
+  }
+
+  /** Drawn agents within `r` tiles of (x, y): world and screen positions (for labels and targeting). */
+  nearby(x: number, y: number, r: number): { id: number; x: number; y: number; sx: number; sy: number; dist: number }[] {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    const out: { id: number; x: number; y: number; sx: number; sy: number; dist: number }[] = [];
+    for (let k = 0; k < this.instances.length; k++) {
+      const h = this.instances[k];
+      const dist = Math.hypot(h.x - x, h.z - y);
+      if (dist > r) continue;
+      v.set(h.x, h.y + 1.35 * h.scale, h.z).project(this.camera);
+      out.push({ id: this.instanceIds[k], x: h.x, y: h.z, sx: rect.left + ((v.x + 1) / 2) * rect.width, sy: rect.top + ((1 - v.y) / 2) * rect.height, dist });
+    }
+    return out.sort((a, b) => a.dist - b.dist);
+  }
+
+  /** Screen position of a ground point (and whether it is inside the canvas). */
+  toScreen(x: number, y: number, lift = 0): { sx: number; sy: number; on: boolean } {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const h = this.terrain ? this.terrain.heightAt(x, y) : 0;
+    const v = new THREE.Vector3(x, h + lift, y).project(this.camera);
+    const sx = rect.left + ((v.x + 1) / 2) * rect.width;
+    const sy = rect.top + ((1 - v.y) / 2) * rect.height;
+    return { sx, sy, on: sx >= rect.left && sx <= rect.right && sy >= rect.top && sy <= rect.bottom };
+  }
+
+  /** Where a drawn agent is right now, or null. */
+  positionOf(id: number): { x: number; y: number } | null {
+    const k = this.instanceIds.indexOf(id);
+    return k >= 0 ? { x: this.instances[k].x, y: this.instances[k].z } : null;
+  }
+
+  /** Terrain point under a screen position (iterated ray/height intersection), or null. */
+  groundAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    if (!this.terrain) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, this.camera);
+    let h = this.terrain.heightAt(this.controls.target.x, this.controls.target.z);
+    const hit = new THREE.Vector3();
+    for (let k = 0; k < 4; k++) {
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -h);
+      if (!ray.ray.intersectPlane(plane, hit)) return null;
+      h = this.terrain.heightAt(hit.x, hit.z);
+    }
+    return { x: hit.x, y: hit.z };
+  }
+
+  /** Camera azimuth (radians) so the player's keys move relative to the view. */
+  azimuth(): number {
+    const d = this.camera.position.clone().sub(this.controls.target);
+    return Math.atan2(d.x, d.z);
   }
 
   /** Nearest agent to a screen point (for selection), or -1. */

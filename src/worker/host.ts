@@ -13,10 +13,14 @@ import { MEM_CAP } from '../sim/state/mind';
 import { WHY_LABELS } from '../sim/systems/decision';
 import { MEM_NAMES } from '../sim/systems/gossip';
 import { describe } from '../sim/history/historian';
+import { applyPlayerAction, availableHelp, inviteOdds, raidCheck, raidOdds, type PlayerAction } from '../sim/play/player';
+import { doingText, feelingText, motivesOf, primaryMotive, whyText } from '../sim/play/motives';
+import { ageYears } from '../sim/systems/common';
 import {
   A_AGE, A_BUILD, A_CLAN, A_ENERGY, A_FEAR, A_FOLLOW, A_GOAL, A_HAIR, A_HEALTH, A_HEIGHT, A_INJURY, A_LEADER, A_MARKER, A_PHASE,
   A_REP, A_SEX, A_SKIN, A_STATUS, ATTR_STRIDE,
   type ClanInspectMsg, type ClanView, type DayEvent, type DayMsg, type FromWorker, type InspectMsg, type ToWorker,
+  type PersonMsg, type PlayView, type UiAction,
 } from './protocol';
 
 let sim: Simulation | undefined;
@@ -37,6 +41,10 @@ let config: unknown = {};
 const SNAPSHOT_EVERY = 10;
 let snapshots = new Map<number, SimSnapshot>();
 let post: (msg: FromWorker, transfer?: Transferable[]) => void = () => {};
+/** Play mode: the frames last sent to the view (what the player saw), for proximity and witnesses. */
+let playMode = false;
+let shownIds: Int32Array = new Int32Array(0);
+let shownFrames: Float32Array = new Float32Array(0);
 
 const GESTURE_EVENTS = new Set(['conflict.threat', 'conflict.attack', 'food.theft', 'pair.formed', 'agent.born', 'agent.died', 'hunt.party_kill', 'leader.challenged']);
 
@@ -148,14 +156,32 @@ function postDay(s: Simulation): void {
     snapshotYears: [...snapshots.keys()].sort((a, b) => a - b),
     yearly,
   };
+  const transfer: Transferable[] = [ids.buffer, attrs.buffer, frames.buffer, newGraves.buffer];
+  if (playMode && s.player) {
+    shownIds = ids.slice();
+    shownFrames = frames.slice();
+    const motives = new Uint8Array(n);
+    const friendly = new Float32Array(n);
+    const me = s.player.id;
+    for (let i = 0; i < n; i++) {
+      const id = ids[i];
+      if (!c.alive[id] || id === me) continue;
+      motives[i] = primaryMotive(s, id);
+      friendly[i] = s.rel.affinity(c.slot[id], me, s.tick);
+    }
+    msg.play = playView(s);
+    msg.motives = motives;
+    msg.friendly = friendly;
+    transfer.push(motives.buffer, friendly.buffer);
+  }
   dayEvents = [];
   oldCamps = [];
-  post(msg, [ids.buffer, attrs.buffer, frames.buffer, newGraves.buffer]);
+  post(msg, transfer);
 }
 
 function stepOnce(s: Simulation): void {
   s.step();
-  if (s.dayOfYear === 0 && s.year % SNAPSHOT_EVERY === 0 && !snapshots.has(s.year)) snapshots.set(s.year, s.snapshot());
+  if (!playMode && s.dayOfYear === 0 && s.year % SNAPSHOT_EVERY === 0 && !snapshots.has(s.year)) snapshots.set(s.year, s.snapshot());
 }
 
 function loop(): void {
@@ -280,6 +306,10 @@ function start(s: Simulation): void {
       if (ticker.length > 60) ticker = ticker.slice(-30);
     }
     if (GESTURE_EVENTS.has(e.type) && e.agents) dayEvents.push({ type: e.type, agents: e.agents.slice(0, 4), x: e.x, y: e.y });
+    if (playMode && s.player) {
+      const toast = playerToast(s, e);
+      if (toast) dayEvents.push({ type: toast.tone, agents: e.agents?.slice(0, 2) ?? [], text: toast.text });
+    }
     // Migration streams (world view): camp moves and people changing clans.
     if (e.type === 'clan.camp_moved') {
       const d = e.data as { from: { x: number; y: number }; to: { x: number; y: number } };
@@ -311,7 +341,24 @@ function start(s: Simulation): void {
 /** Handles one UI message. `send` delivers sim output back to the UI. */
 export function handleMessage(msg: ToWorker, send: (msg: FromWorker, transfer?: Transferable[]) => void): void {
   post = send;
+  if (msg.type === 'play') {
+    startPlay(msg.seed, msg.name, msg.female, msg.warmupYears);
+    return;
+  }
+  if (msg.type === 'pos') {
+    if (sim?.player) applyPlayerAction(sim, { kind: 'pos', x: msg.x, y: msg.y });
+    return;
+  }
+  if (msg.type === 'act') {
+    if (sim?.player) act(sim, msg.action, msg.subStep);
+    return;
+  }
+  if (msg.type === 'person') {
+    if (sim?.player) post(person(sim, msg.id));
+    return;
+  }
   if (msg.type === 'init') {
+    playMode = false;
     seed = msg.seed;
     config = msg.config ?? {};
     snapshots = new Map();
@@ -345,4 +392,175 @@ export function handleMessage(msg: ToWorker, send: (msg: FromWorker, transfer?: 
     while (s.tick < target) stepOnce(s);
     start(s);
   }
+}
+
+// ------------------------------------------------------------------ play mode
+
+function startPlay(newSeed: number, name: string, female: boolean, warmupYears?: number): void {
+  playMode = true;
+  seed = newSeed;
+  config = {};
+  snapshots = new Map();
+  daysPerSecond = 0;
+  const s = Simulation.create(newSeed, makeConfig(config));
+  sim = undefined; // not observable until the player arrives
+  const total = warmupYears ?? s.cfg.play.warmupYears;
+  const lines: string[] = [];
+  s.events.subscribe((e) => {
+    if (e.type === 'agent.died' || e.type === 'conflict.attack' || e.type === 'leader.challenged') {
+      if (e.type !== 'agent.died' || (e.data as { killer?: number }).killer === undefined) return;
+    }
+    const line = describeEvent(s, e);
+    if (line) lines.push(line);
+  });
+  const days = total * s.cfg.time.daysPerYear;
+  const chunk = () => {
+    const end = Math.min(days, s.tick + 36);
+    while (s.tick < end) s.step();
+    post({ type: 'loading', year: s.tick / s.cfg.time.daysPerYear, total, lines: lines.splice(0) });
+    if (s.tick < days) setTimeout(chunk, 0);
+    else {
+      applyPlayerAction(s, { kind: 'spawn', name, female });
+      start(s);
+      post({ type: 'playState', play: playView(s) });
+      last = performance.now();
+      carry = 0;
+      if (!looping) {
+        looping = true;
+        loop();
+      }
+    }
+  };
+  setTimeout(chunk, 0);
+}
+
+/** Where the player saw agent `id` (the displayed frame), falling back to its current position. */
+function shownPos(s: Simulation, id: number, subStep: number): { x: number; y: number } {
+  const n = shownIds.length;
+  const k = shownIds.indexOf(id);
+  const sub = Math.max(0, Math.min(s.cfg.time.subStepsPerDay - 1, subStep | 0));
+  if (k >= 0 && shownFrames.length >= (sub + 1) * n * 2) {
+    return { x: shownFrames[(sub * n + k) * 2], y: shownFrames[(sub * n + k) * 2 + 1] };
+  }
+  return { x: s.agents.cols.x[id], y: s.agents.cols.y[id] };
+}
+
+function act(s: Simulation, a: UiAction, subStep: number): void {
+  const p = s.player!;
+  const c = s.agents.cols;
+  const pc = s.cfg.play;
+  const px = c.x[p.id];
+  const py = c.y[p.id];
+  let action: PlayerAction;
+  if (a.kind === 'help' || a.kind === 'invite') {
+    const t = shownPos(s, a.target, subStep);
+    if (Math.hypot(t.x - px, t.y - py) > pc.interactRadius + 0.75) {
+      post({ type: 'actResult', ok: false, text: 'Too far away. Walk closer first.', seenBy: [] });
+      return;
+    }
+    // Everyone near the player at that moment could see it.
+    const witnesses: number[] = [];
+    const n = shownIds.length;
+    for (let k = 0; k < n; k++) {
+      const w = shownIds[k];
+      if (w === p.id || w === a.target || !c.alive[w]) continue;
+      const q = shownPos(s, w, subStep);
+      if (Math.hypot(q.x - px, q.y - py) <= pc.witnessRadius) witnesses.push(w);
+    }
+    action = a.kind === 'help' ? { kind: 'help', verb: a.verb, target: a.target, witnesses } : { kind: 'invite', target: a.target, witnesses };
+  } else if (a.kind === 'take') {
+    const camp = s.clans.get(p.clanId)!;
+    if (Math.hypot(camp.campX - px, camp.campY - py) > 3) {
+      post({ type: 'actResult', ok: false, text: 'Go back to your camp to take from its store.', seenBy: [] });
+      return;
+    }
+    action = a;
+  } else {
+    action = a;
+  }
+  const r = applyPlayerAction(s, action);
+  post({
+    type: 'actResult', ok: r.ok, text: r.text,
+    seenBy: (r.seenBy ?? []).map((x) => ({ ...x, label: s.clans.label(x.clan) })),
+  });
+  post({ type: 'playState', play: playView(s) });
+}
+
+function playView(s: Simulation): PlayView {
+  const p = s.player!;
+  const c = s.agents.cols;
+  const pc = s.cfg.play;
+  const camp = s.clans.get(p.clanId)!;
+  const members = s.clanMembers.get(p.clanId) ?? [];
+  const sizes = s.clans.extant().map((cl) => ({ id: cl.id, label: s.clans.label(cl.id), size: s.clanMembers.get(cl.id)?.length ?? 0 }))
+    .sort((a, b) => b.size - a.size || a.id - b.id);
+  const others = s.clans.extant().filter((cl) => cl.id !== p.clanId);
+  return {
+    playerId: p.id, name: s.agents.displayName(p.id), clanId: p.clanId, clanLabel: s.clans.label(p.clanId),
+    x: c.x[p.id], y: c.y[p.id], campX: camp.campX, campY: camp.campY,
+    carried: c.carriedFood[p.id], carryCapacity: pc.carryCapacity, store: camp.foodStore,
+    members: members.length, adults: members.filter((m) => ageYears(s, m) >= s.cfg.life.adultAgeYears).length,
+    rank: sizes.findIndex((x) => x.id === p.clanId) + 1, clanCount: sizes.length,
+    largest: { label: sizes[0]?.label ?? '', size: sizes[0]?.size ?? 0 },
+    suspicion: others.map((cl) => ({ clan: cl.id, label: s.clans.label(cl.id), value: p.suspicion[cl.id] ?? 0 })),
+    raids: others.map((cl) => {
+      const chk = raidCheck(s, cl.id);
+      return { clan: cl.id, label: s.clans.label(cl.id), size: s.clanMembers.get(cl.id)?.length ?? 0, odds: raidOdds(s, cl.id), ok: chk.ok, reason: chk.reason, x: cl.campX, y: cl.campY };
+    }),
+    raidPlanned: p.raidTarget,
+    gathersLeft: p.gatherTick === s.tick ? Math.max(0, pc.gatherActionsPerDay - p.gathersToday) : pc.gatherActionsPerDay,
+    caught: p.caught, raidsWon: p.raidsWon, raidsLost: p.raidsLost,
+    interactRadius: pc.interactRadius, witnessRadius: pc.witnessRadius,
+  };
+}
+
+function person(s: Simulation, id: number): PersonMsg {
+  const c = s.agents.cols;
+  const p = s.player!;
+  const alive = id >= 0 && id < s.agents.count && c.alive[id] === 1;
+  const clan = alive ? c.clanId[id] : -1;
+  const inYourClan = clan === p.clanId;
+  const partner = c.partnerId[id];
+  return {
+    type: 'person', id, name: s.agents.displayName(id), alive, clan, clanLabel: s.clans.label(clan),
+    age: alive ? Math.floor(ageYears(s, id)) : 0, female: c.sex[id] === 0,
+    isLeader: clan >= 0 && s.leaders.get(clan) === id,
+    doing: alive ? doingText(s, id) : 'dead', why: alive ? whyText(s, id) : [],
+    motives: alive ? motivesOf(s, id) : [],
+    feeling: alive ? feelingText(s, id, p.id) : { text: '', aff: 0, def: 0, grudge: 0 },
+    help: alive ? availableHelp(s, id) : [],
+    invite: alive && !inYourClan && ageYears(s, id) >= s.cfg.life.independentAgeYears ? inviteOdds(s, id) : null,
+    inYourClan,
+    partner: partner >= 0 && c.alive[partner] ? s.agents.displayName(partner) : '',
+    children: s.pedigree.childrenOf(id).filter((k) => c.alive[k]).length,
+  };
+}
+
+/** Things the player should hear about at once: what happens to their clan and their doings. */
+function playerToast(s: Simulation, e: SimEvent): { tone: 'toast-good' | 'toast-bad' | 'toast'; text: string } | undefined {
+  const p = s.player!;
+  const c = s.agents.cols;
+  const mine = (e.clans ?? []).includes(p.clanId);
+  const strip = (t: string) => t.replace(/^Year \d+: /, '');
+  switch (e.type) {
+    case 'player.caught': return { tone: 'toast-bad', text: strip(describe(s, e)) };
+    case 'player.raid': return { tone: (e.data as { won: boolean }).won ? 'toast-good' : 'toast-bad', text: strip(describe(s, e)) };
+    case 'agent.joined_clan':
+      if (e.clans![0] !== p.clanId || (e.data as { reason: string }).reason === 'joined the stranger') return undefined;
+      return { tone: 'toast-good', text: `${s.agents.displayName(e.agents![0])} joined your clan (${(e.data as { reason: string }).reason}).` };
+    case 'agent.left_clan':
+      return mine ? { tone: 'toast-bad', text: `${s.agents.displayName(e.agents![0])} left your clan (${(e.data as { reason: string }).reason}).` } : undefined;
+    case 'agent.died':
+      if (!mine || e.agents![0] === p.id) return undefined;
+      return { tone: 'toast-bad', text: strip(describe(s, e)) };
+    case 'agent.born': {
+      const kid = e.agents![0];
+      return c.clanId[kid] === p.clanId ? { tone: 'toast-good', text: `${s.agents.displayName(kid)} was born into your clan.` } : undefined;
+    }
+    case 'clan.dissolved':
+    case 'leader.changed':
+    case 'clan.founded':
+      return e.agents?.[0] === p.id ? undefined : { tone: 'toast', text: strip(describe(s, e)) };
+  }
+  return undefined;
 }

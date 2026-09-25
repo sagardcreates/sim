@@ -8,6 +8,7 @@ import type { Simulation } from '../sim';
 import { CAUSE_STARVATION, NO_ID, REP_LACTATING, REP_PREGNANT } from '../state/agents';
 import { ageYears, isAlive, reserveCapacity, sizeFactor, smoothstep, spend } from './common';
 import { killAgent } from './mortality';
+import { playerId } from '../play/player';
 
 export function metabolismSystem(sim: Simulation): void {
   const c = sim.agents.cols;
@@ -15,7 +16,12 @@ export function metabolismSystem(sim: Simulation): void {
   const l = sim.cfg.life;
   const tick = sim.tick;
   // Iterate a copy: starvation deaths mutate `living`.
+  const pid = playerId(sim);
   for (const id of [...sim.agents.living]) {
+    if (id === pid) {
+      c.energy[id] = 1; // the player's own body is not simulated
+      continue;
+    }
     const age = ageYears(sim, id);
     const size = sizeFactor(sim, age);
     let need = mc.basalFraction * mc.adultNeed * size;
@@ -37,6 +43,7 @@ export function metabolismSystem(sim: Simulation): void {
   }
 
   for (const id of [...sim.agents.living]) {
+    if (id === pid) continue;
     const age = ageYears(sim, id);
     if (c.deficit[id] > 0 && c.energy[id] <= 0) {
       const size = sizeFactor(sim, age);

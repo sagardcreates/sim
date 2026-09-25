@@ -6,6 +6,7 @@
  * (spread scales with local density), and death bookkeeping (death record,
  * grave, partner/clan updates).
  */
+import { playerId } from '../play/player';
 import type { Simulation } from '../sim';
 import {
   CAUSE_AGING, CAUSE_EPIDEMIC, CAUSE_INFANT, CAUSE_INJURY, CAUSE_NAMES, CAUSE_NEGLECT, CAUSE_STARVATION,
@@ -24,8 +25,9 @@ export function mortalitySystem(sim: Simulation): void {
   const dpy = sim.cfg.time.daysPerYear;
   const attended = attendedClans(sim);
   const order = sim.shuffledLiving(rng);
+  const pid = playerId(sim);
   for (const id of order) {
-    if (!c.alive[id]) continue;
+    if (!c.alive[id] || id === pid) continue;
     const a = ageYears(sim, id);
     const robust = Math.exp(mc.robustnessEffect * (0.5 - c.robustness[id]));
     const infant = (mc.infantA * Math.exp(-mc.infantB * a)) / dpy;

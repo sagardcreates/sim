@@ -10,6 +10,7 @@
  * Contexts: 'food' (contested patch), 'theft' (resisting a Take), 'grudge'
  * (revenge on sight; ambush if the target is alone), 'challenge' (leadership).
  */
+import { isPlayer } from '../play/player';
 import type { Simulation } from '../sim';
 import type { Rng } from '../rng';
 import { CAUSE_VIOLENCE, NO_ID } from '../state/agents';
@@ -54,7 +55,7 @@ function gatherAllies(sim: Simulation, a: number, b: number, rng: Rng): { a: num
   const out = { a: [] as number[], b: [] as number[] };
   sim.spatialConflict.build(sim.agents.living, c.x, c.y);
   sim.spatialConflict.query(c.x[a], c.y[a], k.allyRadius, c.x, c.y, (w) => {
-    if (w === a || w === b || !c.alive[w] || ageYears(sim, w) < sim.cfg.life.independentAgeYears) return;
+    if (w === a || w === b || !c.alive[w] || isPlayer(sim, w) || ageYears(sim, w) < sim.cfg.life.independentAgeYears) return;
     const side = (x: number) => {
       const v = sim.rel.get(c.slot[w], x, sim.tick);
       return (v ? v.aff + v.def - v.grudge : 0) + sim.relatedness(w, x) * c.cKinWeight[w];
@@ -78,6 +79,8 @@ export function confront(sim: Simulation, a: number, b: number, ctx: ConflictCon
   const rng = sim.rng.get('conflict');
   const none: ConflictOutcome = { level: 0, winner: NO_ID, loser: NO_ID, killed: NO_ID, eventId: -1 };
   if (!isAlive(sim, a) || !isAlive(sim, b) || a === b) return none;
+  // The player is never drawn into fights directly (their risks are in play/player.ts).
+  if (isPlayer(sim, a) || isPlayer(sim, b)) return none;
   // One confrontation per person per day.
   if (c.lastConflictTick[a] === sim.tick || c.lastConflictTick[b] === sim.tick) return none;
   c.lastConflictTick[a] = sim.tick;
