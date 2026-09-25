@@ -34,6 +34,8 @@ export class TerrariumView {
   private territoryMesh?: THREE.Mesh;
   private territoryTex?: THREE.DataTexture;
   private relationLines = new THREE.Group();
+  /** Migration streams: fading arcs for camp moves and clan changes (visual only). */
+  private streams = new THREE.Group();
   private selectionRing: THREE.Mesh;
   /** Selected person (highlighted with a ring). */
   selectedId = -1;
@@ -89,7 +91,7 @@ export class TerrariumView {
     this.selectionRing.rotation.x = -Math.PI / 2;
     this.selectionRing.renderOrder = 10;
     this.selectionRing.visible = false;
-    this.scene.add(this.hemi, this.sun, this.humans.group, this.overlay, this.relationLines, this.selectionRing);
+    this.scene.add(this.hemi, this.sun, this.humans.group, this.overlay, this.relationLines, this.selectionRing, this.streams);
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -161,6 +163,7 @@ export class TerrariumView {
         this.gestures.set(b, { code: G_LUNGE, until });
       }
     }
+    for (const e of d.events) if (e.from && e.to) this.addStream(e.from, e.to, e.type === 'clan.camp_moved' ? '#f2c14e' : '#9ad0ff');
     // Recolor terrain monthly (season, drought, paths).
     if (d.tick - this.lastRecolorTick >= 30 || d.tick < this.lastRecolorTick) {
       this.lastRecolorTick = d.tick;
@@ -259,6 +262,7 @@ export class TerrariumView {
         this.followScreen = { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
       }
     }
+    this.fadeStreams();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
@@ -351,6 +355,33 @@ export class TerrariumView {
     this.instanceIds.push(...leaderIds, ...otherIds);
     this.pointColors.push(...leaderCols, ...otherCols);
     void this.tmpColor;
+  }
+
+  private addStream(from: { x: number; y: number }, to: { x: number; y: number }, color: string): void {
+    if (!this.terrain || this.streams.children.length > 60) return;
+    const a = new THREE.Vector3(from.x, this.terrain.heightAt(from.x, from.y) + 0.3, from.y);
+    const b = new THREE.Vector3(to.x, this.terrain.heightAt(to.x, to.y) + 0.3, to.y);
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    mid.y += 2 + a.distanceTo(b) * 0.25;
+    const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(24)),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+    line.userData.born = performance.now();
+    this.streams.add(line);
+  }
+
+  private fadeStreams(): void {
+    const now = performance.now();
+    for (const l of [...this.streams.children] as THREE.Line[]) {
+      const age = (now - l.userData.born) / 8000;
+      if (age >= 1) {
+        this.streams.remove(l);
+        l.geometry.dispose();
+        (l.material as THREE.Material).dispose();
+      } else {
+        (l.material as THREE.LineBasicMaterial).opacity = 0.9 * (1 - age);
+      }
+    }
   }
 
   /** Nearest agent to a screen point (for selection), or -1. */

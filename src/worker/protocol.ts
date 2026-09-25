@@ -52,6 +52,9 @@ export interface DayEvent {
   x?: number;
   y?: number;
   text?: string;
+  /** For movements between places (camp moves, clan changes): where from and to. */
+  from?: { x: number; y: number };
+  to?: { x: number; y: number };
 }
 
 export interface ClanView {

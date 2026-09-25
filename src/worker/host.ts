@@ -280,6 +280,16 @@ function start(s: Simulation): void {
       if (ticker.length > 60) ticker = ticker.slice(-30);
     }
     if (GESTURE_EVENTS.has(e.type) && e.agents) dayEvents.push({ type: e.type, agents: e.agents.slice(0, 4), x: e.x, y: e.y });
+    // Migration streams (world view): camp moves and people changing clans.
+    if (e.type === 'clan.camp_moved') {
+      const d = e.data as { from: { x: number; y: number }; to: { x: number; y: number } };
+      dayEvents.push({ type: e.type, agents: [], from: d.from, to: d.to });
+    }
+    if (e.type === 'agent.joined_clan') {
+      const from = s.clans.get((e.data as { from: number }).from);
+      const to = s.clans.get(e.clans![0]);
+      if (from && to) dayEvents.push({ type: e.type, agents: e.agents ?? [], from: { x: from.campX, y: from.campY }, to: { x: to.campX, y: to.campY } });
+    }
     if (e.type === 'clan.camp_moved') {
       const from = (e.data as { from: { x: number; y: number } }).from;
       oldCamps.push({ x: from.x, y: from.y, clan: e.clans![0] });
