@@ -1,0 +1,10 @@
+{
+  "name": "Marker innovation survival vs originator prestige",
+  "question": "Do new body-paint patterns survive more often when their originator is high-status (prestige bias), even though markers are neutral?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["innovations", "innovationSurvival", "innovationStatusSurvivalCorr"],
+  "variants": {
+    "baseline": { "culture": { "markerInnovation": 0.003 } },
+    "no prestige bias": { "culture": { "markerInnovation": 0.003, "obliqueRate": 0, "obliqueCategorical": 0 } }
+  }
+}

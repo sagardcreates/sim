@@ -1,0 +1,7 @@
+{
+  "name": "Emergent group-size attractors and fission rhythm",
+  "question": "What clan sizes do groups settle around, how big are they when they split, and how often do splits recur?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["meanClanSize", "fissionParentSizeMean", "fissionIntervalMean", "extinctions"],
+  "variants": { "baseline": {} }
+}

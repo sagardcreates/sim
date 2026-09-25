@@ -1,0 +1,11 @@
+{
+  "name": "Residence rule vs cross-clan affinity and killings",
+  "question": "Do marriage residence rules change how clans feel about each other and how often they kill each other?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["meanCrossClanAffinity", "killingsPer1000PersonYears", "alliances", "feuds"],
+  "variants": {
+    "men move (matrilocal)": { "init": { "cultureOverrides": { "residence": 0 } } },
+    "women move (patrilocal)": { "init": { "cultureOverrides": { "residence": 1 } } },
+    "either": { "init": { "cultureOverrides": { "residence": 2 } } }
+  }
+}

@@ -77,7 +77,10 @@ function wire(seed: number): void {
     else if (m.type === 'inspect') renderInspector(m);
     else if (m.type === 'clanInspect') renderClan(m);
   };
-  send({ type: 'init', seed });
+  const params = new URLSearchParams(location.search);
+  const agents = Number(params.get('agents') ?? 0);
+  const config = agents > 0 ? { init: { agentsPerClan: Math.ceil(agents / 4) } } : undefined;
+  send({ type: 'init', seed, config });
   send({ type: 'speed', daysPerSecond });
 }
 
@@ -313,8 +316,19 @@ view.renderer.domElement.addEventListener('pointerup', (ev) => {
   } else if (camp >= 0) selectClan(camp);
 });
 
+let fpsFrames = 0;
+let fpsSince = performance.now();
+let fps = 0;
 function animate(): void {
   view.frame();
+  fpsFrames++;
+  const tNow = performance.now();
+  if (tNow - fpsSince > 1000) {
+    fps = (fpsFrames * 1000) / (tNow - fpsSince);
+    fpsFrames = 0;
+    fpsSince = tNow;
+    $('fps').textContent = `${fps.toFixed(0)} fps · ${cur?.ids.length ?? 0} drawn · js ${view.lastBuildMs.toFixed(1)} ms`;
+  }
   const bubble = $('bubble');
   if (view.followScreen && lastInspect && lastInspect.id === selected && lastInspect.alive) {
     bubble.hidden = false;
@@ -329,5 +343,7 @@ function animate(): void {
 }
 
 renderLegend();
-void start(1);
+const initialSeed = Number(new URLSearchParams(location.search).get('seed') ?? 1) || 1;
+$<HTMLInputElement>('seed').value = String(initialSeed);
+void start(initialSeed);
 requestAnimationFrame(animate);

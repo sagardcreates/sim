@@ -33,7 +33,16 @@ export type EventType =
   | 'conflict.attack'
   | 'food.theft'
   | 'culture.marker_innovation'
-  | 'norm.nonsharing';
+  | 'norm.nonsharing'
+  | 'history.alliance'
+  | 'history.alliance_ended'
+  | 'history.feud'
+  | 'history.blood_feud'
+  | 'history.feud_ended'
+  | 'history.famine'
+  | 'history.regime'
+  | 'history.overtake'
+  | 'history.first';
 
 /** Event types retained permanently. Everything else is micro (rolling buffer + yearly counts). */
 export const MACRO_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
@@ -41,6 +50,8 @@ export const MACRO_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'pair.formed', 'climate.drought_began', 'climate.drought_ended', 'epidemic.outbreak', 'epidemic.ended',
   'agent.left_clan', 'agent.joined_clan', 'agent.expelled', 'clan.fission',
   'leader.changed', 'leader.challenged', 'conflict.attack',
+  'history.alliance', 'history.alliance_ended', 'history.feud', 'history.blood_feud', 'history.feud_ended',
+  'history.famine', 'history.regime', 'history.overtake', 'history.first', 'culture.marker_innovation',
 ]);
 
 export interface SimEvent {

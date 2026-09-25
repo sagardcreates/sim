@@ -52,6 +52,29 @@ export function computeStatus(sim: Simulation): void {
   }
 }
 
+/**
+ * What a leader's supporters mostly value: deference-weighted mean of their
+ * legitimacy weights, reported as the dominant criterion (for the historian).
+ */
+function supportBasis(sim: Simulation, leader: number): string {
+  const c = sim.agents.cols;
+  const w = [0, 0, 0, 0];
+  let tot = 0;
+  for (const m of sim.clanMembers.get(c.clanId[leader]) ?? []) {
+    const d = sim.rel.get(c.slot[m], leader, sim.tick)?.def ?? 0;
+    if (d <= 0) continue;
+    w[0] += d * c.cLegStrength[m];
+    w[1] += d * c.cLegGenerosity[m];
+    w[2] += d * c.cLegLineage[m];
+    w[3] += d * c.cLegAge[m];
+    tot += d;
+  }
+  if (tot <= 0) return '';
+  const names = ['strength', 'generosity', 'lineage', 'age and skill'];
+  const k = w.indexOf(Math.max(...w));
+  return `${names[k]} (${Math.round((100 * w[k]) / tot)}%)`;
+}
+
 /** Periodic: recompute status and derived leaders; log leader changes with their causes. */
 export function leadershipSystem(sim: Simulation): void {
   const c = sim.agents.cols;
@@ -86,10 +109,12 @@ export function leadershipSystem(sim: Simulation): void {
       const lastChallenge = sim.lastChallenge.get(clan.id);
       if (lastChallenge !== undefined) causes.push(lastChallenge);
       if (prev !== NO_ID && !c.alive[prev] && sim.deathEvent.has(prev)) causes.push(sim.deathEvent.get(prev)!);
+      if (leader !== NO_ID && c.lastWinEvent[leader] > 0) causes.push(c.lastWinEvent[leader]);
+      const basis = leader !== NO_ID ? supportBasis(sim, leader) : '';
       const ev = sim.events.emit(sim.tick, {
         type: 'leader.changed', causes, agents: leader === NO_ID ? (prev === NO_ID ? [] : [prev]) : [leader, ...(prev === NO_ID ? [] : [prev])],
         clans: [clan.id], x: clan.campX, y: clan.campY,
-        data: { leader, previous: prev, share: Math.round(share * 1000) / 1000, members: members.length },
+        data: { leader, previous: prev, share: Math.round(share * 1000) / 1000, members: members.length, basis },
       });
       clan.history.push(ev);
       if (leader === NO_ID) sim.leaders.delete(clan.id);
@@ -216,6 +241,7 @@ export function challengeSystem(sim: Simulation): void {
       if (m === L || ageYears(sim, m) < lc.challengerMinAge || ageYears(sim, m) > lc.challengerMaxAge) continue;
       const defToL = sim.rel.get(c.slot[m], L, sim.tick)?.def ?? 0;
       const allies = support(sim, members, m) / Math.max(0.1, supportL);
+      if (allies < lc.challengeMinSupportRatio) continue; // no one challenges without backing
       const drive = lc.challengeBoldness * c.boldness[m] + lc.challengeAllies * Math.min(2, allies)
         + lc.challengeStrength * (strength(sim, m) - strL) - lc.challengeDeference * defToL * 4 - lc.challengeBase;
       cands.push(m);

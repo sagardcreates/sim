@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { configHash, makeConfig } from '../sim/config';
 import { CODE_VERSION, Simulation } from '../sim/sim';
 import { parseArgs } from './args';
+import { chronicle } from '../sim/history/historian';
 
 const args = parseArgs(process.argv.slice(2));
 const seed = Number(args.seed ?? 1);
@@ -55,6 +56,8 @@ const summary = {
 };
 if (writeFiles) {
   writeFileSync(join(dir, 'summary.json'), JSON.stringify(summary, null, 2));
+  writeFileSync(join(dir, 'chronicle.md'), `# Chronicle (seed ${seed})\n\n` + chronicle(sim, { limit: 300 }).map((l) => `- ${l}`).join('\n') + '\n');
+  writeFileSync(join(dir, 'yearly.json'), JSON.stringify(sim.stats.years));
   events!.end();
 }
 console.log(JSON.stringify(summary, null, 2));

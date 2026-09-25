@@ -1,0 +1,13 @@
+{
+  "name": "Scarcity vs violence",
+  "question": "Does lower carrying capacity or more frequent drought raise violence? (Violence must arise through contested food, not be written as a function of hunger.)",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["killingsPer1000PersonYears", "attacks", "threats", "thefts", "feuds", "famines"],
+  "variants": {
+    "rich": { "resources": { "plantUnitsPerCapacity": 13 } },
+    "baseline": {},
+    "poor": { "resources": { "plantUnitsPerCapacity": 7 } },
+    "droughty": { "climate": { "droughtSd": 0.55, "droughtTauDays": 700 } },
+    "poor+droughty": { "resources": { "plantUnitsPerCapacity": 7 }, "climate": { "droughtSd": 0.55, "droughtTauDays": 700 } }
+  }
+}

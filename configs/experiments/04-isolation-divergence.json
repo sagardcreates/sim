@@ -1,0 +1,11 @@
+{
+  "name": "Isolation vs cultural divergence",
+  "question": "Does a mountain barrier increase between-clan divergence in markers and functional traits?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["cultureFstEnd", "cultureFstMean", "markerDivEnd", "markerDivMean", "meanCrossClanAffinity"],
+  "variants": {
+    "open map": {},
+    "mountain barrier": { "world": { "barrier": { "enabled": true, "orientation": "vertical", "position": 0.5, "width": 3, "gapCount": 0 } } },
+    "barrier with 2 passes": { "world": { "barrier": { "enabled": true, "orientation": "vertical", "position": 0.5, "width": 3, "gapCount": 2 } } }
+  }
+}

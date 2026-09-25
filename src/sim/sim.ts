@@ -18,6 +18,7 @@ import { clanMembershipSystem, yearlyClanSystem } from './systems/clans';
 import { fieldEncounters, nightSocialSystem } from './systems/social';
 import { challengeSystem, deferenceDriftSystem, leadershipSystem } from './systems/leadership';
 import { cultureDivergence, cultureSystem } from './systems/culture';
+import { historianSystem, initialHistorian, type HistorianState } from './history/historian';
 import { homeTile } from './systems/common';
 import { campSystem } from './systems/camps';
 import { climateSystem, initialClimate, type ClimateState } from './systems/climate';
@@ -35,7 +36,7 @@ import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm4.1';
+export const CODE_VERSION = 'm6.0';
 
 export interface Grave {
   id: number;
@@ -61,6 +62,8 @@ export class Simulation {
   climate: ClimateState = initialClimate();
   syllables = new Map<number, SyllableSet>();
   graves: Grave[] = [];
+  /** Historian's running state (labels are part of history, so this is state). */
+  historian: HistorianState = initialHistorian();
   // --- caches / derived (not state; rebuilt deterministically) ---
   fields: FlowFields;
   spatial: SpatialHash;
@@ -252,6 +255,7 @@ export class Simulation {
       this.checkDissolution();
       this.computeClanRelations();
       this.closeYear();
+      historianSystem(this);
     }
   }
 
@@ -282,9 +286,42 @@ export class Simulation {
     for (const clan of this.clans.extant()) {
       if ((this.clanMembers.get(clan.id)?.length ?? 0) > 0) continue;
       clan.dissolvedTick = this.tick;
-      const ev = this.events.emit(this.tick, { type: 'clan.dissolved', causes: [], clans: [clan.id], x: clan.campX, y: clan.campY, data: { name: clan.name } });
+      // Causes: the last departures and deaths of its members; where members went.
+      const losses: number[] = [];
+      const went = new Map<string, number>();
+      const since = this.tick - 20 * this.cfg.time.daysPerYear;
+      for (const e of [...this.events.macro.values()].reverse()) {
+        if (e.tick < since) break;
+        if (!(e.clans ?? []).includes(clan.id)) continue;
+        if (e.type === 'agent.left_clan') {
+          const to = (e.data as { to: number }).to;
+          const key = to < 0 ? 'living alone' : this.clans.label(to);
+          went.set(key, (went.get(key) ?? 0) + 1 + ((e.data as { with?: number }).with ?? 0));
+          if (losses.length < 4) losses.push(e.id);
+        } else if (e.type === 'agent.died' && losses.length < 4) {
+          losses.push(e.id);
+        }
+      }
+      const wentTo = [...went.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} (${v})`).join(', ');
+      const ev = this.events.emit(this.tick, {
+        type: 'clan.dissolved', causes: losses, clans: [clan.id], x: clan.campX, y: clan.campY,
+        data: { name: clan.name, wentTo },
+      });
       clan.history.push(ev);
     }
+  }
+
+  /** Who (if anyone) led a clan at a given tick, from its leader.changed records. */
+  leaderAt(clanId: number, tick: number): number {
+    const clan = this.clans.get(clanId);
+    if (!clan) return -1;
+    let leader = -1;
+    for (const id of clan.history) {
+      const e = this.events.macro.get(id);
+      if (!e || e.tick > tick) break;
+      if (e.type === 'leader.changed') leader = (e.data as { leader: number }).leader;
+    }
+    return leader;
   }
 
   private closeYear(): void {
@@ -309,41 +346,119 @@ export class Simulation {
     this.events.closeYear(year);
   }
 
-  /** Extra per-run metrics used by acceptance reports (grows with milestones). */
+  /** Per-run metrics for acceptance reports and experiments (analysis only; never read by systems). */
   acceptanceMetrics(): Record<string, number> {
     const tenures = this.leaderTenures();
     const years = tenures.map((t) => t.years).sort((a, b) => a - b);
-    const mean = years.length ? years.reduce((a, b) => a + b, 0) / years.length : 0;
-    const sd = years.length ? Math.sqrt(years.reduce((a, b) => a + (b - mean) ** 2, 0) / years.length) : 0;
+    const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const tMean = mean(years);
+    const sd = years.length ? Math.sqrt(years.reduce((a, b) => a + (b - tMean) ** 2, 0) / years.length) : 0;
+    const ys = this.stats.years;
+    const c = this.agents.cols;
+    const living = this.agents.living;
+    const macro = [...this.events.macro.values()];
+    const dpy = this.cfg.time.daysPerYear;
+    // Feuds: count and mean duration (label to end label).
+    const feudStarts = new Map<string, number>();
+    const feudLengths: number[] = [];
+    for (const e of macro) {
+      if (e.type === 'history.feud' || e.type === 'history.blood_feud') feudStarts.set((e.clans ?? []).join('-'), e.tick);
+      if (e.type === 'history.feud_ended') {
+        const k = (e.clans ?? []).join('-');
+        const st = feudStarts.get(k);
+        if (st !== undefined) {
+          feudLengths.push((e.tick - st) / dpy);
+          feudStarts.delete(k);
+        }
+      }
+    }
+    for (const st of feudStarts.values()) feudLengths.push((this.tick - st) / dpy);
+    // Fission rhythm: sizes at fission and intervals between fissions (per parent clan).
+    const fissions = macro.filter((e) => e.type === 'clan.fission');
+    const fissionSizes = fissions.map((e) => (e.data as { parentSize?: number }).parentSize ?? 0);
+    const byParent = new Map<number, number[]>();
+    for (const e of fissions) (byParent.get(e.clans![0]) ?? byParent.set(e.clans![0], []).get(e.clans![0])!).push(e.tick);
+    const intervals: number[] = [];
+    for (const ts of byParent.values()) for (let k = 1; k < ts.length; k++) intervals.push((ts[k] - ts[k - 1]) / dpy);
+    // Kin vs clan loyalty: voluntary moves toward more kin.
+    const moves = macro.filter((e) => e.type === 'agent.joined_clan' && (e.data as { reason: string }).reason === 'sought a better clan');
+    const towardKin = moves.filter((e) => (e.data as { kinTo: number; kinFrom: number }).kinTo > (e.data as { kinFrom: number }).kinFrom).length;
+    // Marker innovations: survival to the end (>= 20 years old) vs originator status.
+    const inno = macro.filter((e) => e.type === 'culture.marker_innovation' && this.tick - e.tick >= 20 * dpy);
+    const alive = new Set<number>();
+    for (const id of living) alive.add(c.cMarker[id]);
+    const surv = inno.map((e) => (alive.has((e.data as { marker: number }).marker) ? 1 : 0));
+    const stat = inno.map((e) => (e.data as { status: number }).status);
+    const corr = pearson(stat, surv);
+    const cross: number[] = [];
+    for (const [, v] of this.clanRelations) cross.push(v);
+    const regimes = Object.values(this.historian.regimes);
+    const killingsTotal = ys.reduce((a, y) => a + y.killings, 0);
+    const personYears = ys.reduce((a, y) => a + y.population, 0);
     return {
       tenures: years.length,
-      tenureMean: mean,
+      tenureMean: tMean,
       tenureMedian: years.length ? years[Math.floor(years.length / 2)] : 0,
       tenureMax: years.length ? years[years.length - 1] : 0,
-      tenureCV: mean > 0 ? sd / mean : 0,
-      leaderYearsShare: this.stats.years.length
-        ? this.stats.years.reduce((a, y) => a + y.leaders / Math.max(1, y.clans.filter((c) => c.size > 0).length), 0) / this.stats.years.length : 0,
-      cultureFstStart: this.stats.years[0]?.cultureFst ?? 0,
-      cultureFstEnd: this.stats.years[this.stats.years.length - 1]?.cultureFst ?? 0,
-      markerDivStart: this.stats.years[0]?.markerDivergence ?? 0,
-      markerDivEnd: this.stats.years[this.stats.years.length - 1]?.markerDivergence ?? 0,
-      cultureFstMean: this.stats.years.length ? this.stats.years.reduce((a, y) => a + y.cultureFst, 0) / this.stats.years.length : 0,
-      markerDivMean: this.stats.years.length ? this.stats.years.reduce((a, y) => a + y.markerDivergence, 0) / this.stats.years.length : 0,
-      threats: this.stats.years.reduce((a, y) => a + y.threats, 0),
-      attacks: this.stats.years.reduce((a, y) => a + y.attacks, 0),
-      killings: this.stats.years.reduce((a, y) => a + y.killings, 0),
+      tenureCV: tMean > 0 ? sd / tMean : 0,
+      leaderYearsShare: ys.length ? ys.reduce((a, y) => a + y.leaders / Math.max(1, y.clans.filter((cl) => cl.size > 0).length), 0) / ys.length : 0,
+      cultureFstStart: ys[0]?.cultureFst ?? 0,
+      cultureFstEnd: ys[ys.length - 1]?.cultureFst ?? 0,
+      markerDivStart: ys[0]?.markerDivergence ?? 0,
+      markerDivEnd: ys[ys.length - 1]?.markerDivergence ?? 0,
+      cultureFstMean: mean(ys.map((y) => y.cultureFst)),
+      markerDivMean: mean(ys.map((y) => y.markerDivergence)),
+      threats: ys.reduce((a, y) => a + y.threats, 0),
+      attacks: ys.reduce((a, y) => a + y.attacks, 0),
+      killings: killingsTotal,
+      killingsPer1000PersonYears: personYears > 0 ? (1000 * killingsTotal) / personYears : 0,
+      thefts: ys.reduce((a, y) => a + y.thefts, 0),
+      feuds: feudLengths.length,
+      feudMeanYears: mean(feudLengths),
+      famines: macro.filter((e) => e.type === 'history.famine').length,
+      alliances: macro.filter((e) => e.type === 'history.alliance').length,
+      fissionParentSizeMean: mean(fissionSizes),
+      fissionIntervalMean: mean(intervals),
+      meanClanSize: mean(ys.flatMap((y) => y.clans.filter((cl) => cl.size > 0).map((cl) => cl.size))),
+      extinctions: macro.filter((e) => e.type === 'clan.dissolved').length,
+      voluntaryMoves: moves.length,
+      movesTowardKinShare: moves.length ? towardKin / moves.length : 0,
+      meanSharingNorm: mean(living.map((id) => c.cSharing[id])),
+      meanViolenceTolerance: mean(living.map((id) => c.cViolence[id])),
+      meanOutgroupTrust: mean(living.map((id) => c.cOutgroupTrust[id])),
+      meanLegLineage: mean(living.map((id) => c.cLegLineage[id])),
+      meanCrossClanAffinity: mean(cross),
+      storeShare: ys.length ? ys.reduce((a, y) => a + y.foodStored, 0) / Math.max(1, ys.reduce((a, y) => a + y.foodStored + y.foodGiven, 0)) : 0,
+      regimeEgalitarian: regimes.filter((r) => r === 'egalitarian band').length,
+      regimeBigMan: regimes.filter((r) => r === 'big-man band').length,
+      regimeChiefly: regimes.filter((r) => r === 'chiefly band').length,
+      regimeHereditary: regimes.filter((r) => r === 'hereditary chiefdom').length,
+      regimeContested: regimes.filter((r) => r === 'contested hierarchy').length,
+      kinSuccessionShare: kinSuccession(this, tenures),
+      innovations: inno.length,
+      innovationSurvival: surv.length ? mean(surv) : 0,
+      innovationStatusSurvivalCorr: corr,
     };
   }
 
-  /** Leader tenures (years) from leader.changed records; tenures still running at the end are included. */
+  /**
+   * Leader tenures (years) from leader.changed records; tenures still running
+   * at the end are included. A reign interrupted by a short leaderless gap
+   * (<= historian.tenureMergeGapYears) counts as one reign.
+   */
   leaderTenures(): { clan: number; leader: number; start: number; end: number; years: number }[] {
     const out: { clan: number; leader: number; start: number; end: number; years: number }[] = [];
     const dpy = this.cfg.time.daysPerYear;
+    const gap = this.cfg.historian.tenureMergeGapYears * dpy;
     for (const clan of this.clans.clans.values()) {
+      const reigns: { leader: number; start: number; end: number }[] = [];
       let cur = -1;
       let since = 0;
       const close = (end: number) => {
-        if (cur >= 0) out.push({ clan: clan.id, leader: cur, start: since, end, years: (end - since) / dpy });
+        if (cur < 0) return;
+        const last = reigns[reigns.length - 1];
+        if (last && last.leader === cur && since - last.end <= gap) last.end = end;
+        else reigns.push({ leader: cur, start: since, end });
       };
       for (const id of clan.history) {
         const e = this.events.macro.get(id);
@@ -353,6 +468,7 @@ export class Simulation {
         since = e.tick;
       }
       close(clan.dissolvedTick >= 0 ? clan.dissolvedTick : this.tick);
+      for (const r of reigns) out.push({ clan: clan.id, ...r, years: (r.end - r.start) / dpy });
     }
     return out;
   }
@@ -379,6 +495,7 @@ export class Simulation {
     st.set(this.status.subarray(0, Math.min(this.status.length, this.agents.count)));
     h.typed(st);
     h.string(stableStringify(this.graves));
+    h.string(stableStringify(this.historian));
     h.string(stableStringify(this.rng.getState()));
     h.number(this.events.nextId);
     return h.digest();
@@ -402,6 +519,7 @@ export class Simulation {
       world: { plantFood: Array.from(this.world.plantFood), gameDensity: Array.from(this.world.gameDensity) },
       climate: deepClone(this.climate),
       graves: deepClone(this.graves),
+      historian: deepClone(this.historian),
       rng: this.rng.getState(),
       stats: { day: deepClone(this.stats.day), years: deepClone(this.stats.years) },
       statusCache: {
@@ -445,6 +563,7 @@ export class Simulation {
     sim.world.gameDensity.set(snap.world.gameDensity);
     sim.climate = deepClone(snap.climate);
     sim.graves = deepClone(snap.graves);
+    sim.historian = deepClone(snap.historian);
     sim.rng.setState(snap.rng);
     sim.stats.day = deepClone(snap.stats.day);
     sim.stats.years = deepClone(snap.stats.years);
@@ -488,6 +607,7 @@ export interface SimSnapshot {
   world: { plantFood: number[]; gameDensity: number[] };
   climate: ClimateState;
   graves: Grave[];
+  historian: HistorianState;
   rng: Record<string, RngState>;
   stats: { day: DayCounters; years: YearStats[] };
   statusCache: { status: number[]; clanDeference: number[]; clanDefTotal: [number, number][] };
@@ -497,4 +617,35 @@ export interface SimSnapshot {
     yearCounts: Record<string, number>;
     yearlyAggregates: { year: number; counts: Record<string, number> }[];
   };
+}
+
+function pearson(x: number[], y: number[]): number {
+  const n = x.length;
+  if (n < 3) return 0;
+  const mx = x.reduce((a, b) => a + b, 0) / n;
+  const my = y.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (x[i] - mx) * (y[i] - my);
+    sxx += (x[i] - mx) ** 2;
+    syy += (y[i] - my) ** 2;
+  }
+  return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0;
+}
+
+function kinSuccession(sim: Simulation, tenures: { clan: number; leader: number; start: number }[]): number {
+  const byClan = new Map<number, { leader: number; start: number }[]>();
+  for (const t of tenures) (byClan.get(t.clan) ?? byClan.set(t.clan, []).get(t.clan)!).push(t);
+  let succ = 0;
+  let kin = 0;
+  for (const list of byClan.values()) {
+    list.sort((a, b) => a.start - b.start);
+    for (let k = 1; k < list.length; k++) {
+      succ++;
+      if (sim.pedigree.exactRelatedness(list[k - 1].leader, list[k].leader) >= 0.25) kin++;
+    }
+  }
+  return succ ? kin / succ : 0;
 }

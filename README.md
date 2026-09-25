@@ -1,28 +1,43 @@
 # Terrarium
 
-An agent-based artificial civilization simulation where clans, leadership, conflict and culture emerge from individual rules. The source of truth is [`docs/SPEC.md`](docs/SPEC.md), and design decisions are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+An agent-based artificial civilization. Small bands of simple humans forage, share, pair, raise children, quarrel, follow leaders, split into new clans, spread body paint and gossip. Social structure, leadership, conflict and culture **emerge from individual rules**: named stories like feuds, alliances and dynasties are labels the historian applies afterwards.
 
-## Status
+- Spec (source of truth): [`docs/SPEC.md`](docs/SPEC.md)
+- Every design decision and deviation: [`docs/DECISIONS.md`](docs/DECISIONS.md)
+- Demography calibration: [`docs/CALIBRATION.md`](docs/CALIBRATION.md)
 
-**M0 (skeleton)** is done: config system, seeded RNG streams, struct-of-arrays agent store, causal event log, terrain generation, headless CLI, Web Worker, and a 2D debug view.
+It's deterministic: the same `(seed, config, code version)` always produces the same history, verified by state-hash tests including snapshot/restore and renderer invariance. There is no LLM anywhere in the simulation.
 
-## Usage
+## Run it
 
 ```sh
 npm install
-npm run dev                  # 2D debug view in the browser
-npm run sim -- --seed 1 --years 10 --config configs/default.json --out runs/
-npm test                     # includes the determinism acceptance test
-npm run lint && npm run typecheck
+npm run dev          # the 3D terrarium in the browser (index.html); debug.html is the 2D debug view
+npm test             # 80+ tests: determinism, invariants, relatedness math, conflict, culture, historian...
 ```
 
-`npm run sim` writes `runs/seed<seed>-<configHash>/` with `events.jsonl`, yearly `snapshots/`, and `summary.json` (including the state hash). Options: `--snapshot-every N` and `--no-output`.
+Headless:
+
+```sh
+npm run sim -- --seed 1 --years 300 --config configs/default.json --out runs/
+    # -> runs/seed1-<confighash>/{events.jsonl, snapshots/year-NNNN.json, summary.json, chronicle.md, yearly.json}
+npm run calibrate -- --seeds 1..20 --years 300      # demography vs targets
+npm run accept -- --milestone all --seeds 1..20      # M2-M4 acceptance (+ cultural-learning knockout)
+npm run history -- --seed 2 --years 300              # chronicle + "who founded / why dissolved / how gained power"
+npm run batch -- --experiment configs/experiments/06-revenge-scope.json --seeds 1..50
+npm run batch -- --all --seeds 1..6 --years 100      # every experiment, pilot size
+```
 
 ## Layout
 
-- `src/sim/`: pure deterministic core. Lint and typecheck forbid DOM, Node, `Math.random` and wall-clock time.
-- `src/worker/`: Web Worker wrapper and message protocol.
-- `src/debug/`: M0 2D canvas debug view. The Three.js renderer arrives in M5.
-- `src/cli/`: headless tools.
-- `configs/`: all tunable parameters.
-- `tests/`: Vitest suites.
+| path | what |
+|---|---|
+| `src/sim/` | the pure deterministic core. Lint and a DOM-free typecheck forbid DOM, Node, `Math.random` and wall-clock time. |
+| `src/sim/systems/` | one file per system: climate, resources, metabolism, decision, movement, provision, social, reproduction, mortality, camps, clans, leadership, conflict, culture, gossip |
+| `src/sim/state/` | SoA agent columns, per-agent memory pool (places, paths, "why", gossip), relationship maps, pedigree + known-kin index, clans |
+| `src/sim/history/` | event log (causal graph), stats, demography measures, historian (labels, chronicle, whyQuery) |
+| `src/worker/` | Web Worker host: render buffers, inspectors, scrubbing |
+| `src/render/` | Three.js terrarium: terrain, water, trees, camps, graves, instanced humans, overlays |
+| `src/ui/` | custom panels: inspector, clan panel, timeline, chronicle, time controls |
+| `src/cli/` | headless run, calibrate, accept, history, batch (worker_threads pool) |
+| `configs/` | `default.json` (all tunables) and `experiments/*.json` |

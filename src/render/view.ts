@@ -17,6 +17,7 @@ import { Terrain } from './terrain';
 
 export type ViewMode = 'world' | 'clan' | 'follow';
 
+const GREY = new THREE.Color('#cfcac2');
 const GOAL_COLORS = ['#c9c4b8', '#7fd36b', '#ff6b5b', '#f2c14e', '#6bc6ff', '#ffffff', '#d58cff', '#ff2020'];
 
 export class TerrariumView {
@@ -55,6 +56,10 @@ export class TerrariumView {
   private lastRecolorTick = -999;
   private timer = new THREE.Timer();
   private tmpColor = new THREE.Color();
+  /** Per-agent colors computed once per day (skin, hair, clothing, dot). */
+  private colorCache = new Map<number, { skin: THREE.Color; hair: THREE.Color; cloth: THREE.Color; dotClan: THREE.Color; dotGoal: THREE.Color }>();
+  /** Milliseconds of JS spent building instances last frame (excludes GPU). */
+  lastBuildMs = 0;
   /** Screen position of the followed agent (for the thought bubble), or null. */
   followScreen: { x: number; y: number } | null = null;
 
@@ -119,6 +124,7 @@ export class TerrariumView {
   onDay(d: DayMsg): void {
     this.prev = this.cur;
     this.cur = d;
+    this.refreshColors(d);
     this.dayArrivedAt = performance.now();
     if (!this.terrain || !this.camps) return;
     this.camps.update(d.clans);
@@ -166,6 +172,29 @@ export class TerrariumView {
     if (this.showRelations) this.updateRelationLines();
   }
 
+  private refreshColors(d: DayMsg): void {
+    const A = d.attrs;
+    const keep = new Set<number>();
+    for (let i = 0; i < d.ids.length; i++) {
+      const o = i * ATTR_STRIDE;
+      const id = d.ids[i];
+      keep.add(id);
+      const age = A[o + A_AGE];
+      const elder = Math.max(0, Math.min(1, (age - 50) / 25));
+      let e = this.colorCache.get(id);
+      if (!e) {
+        e = { skin: new THREE.Color(), hair: new THREE.Color(), cloth: new THREE.Color(), dotClan: new THREE.Color(), dotGoal: new THREE.Color() };
+        this.colorCache.set(id, e);
+      }
+      e.skin.setHSL(0.07, 0.45, 0.28 + 0.38 * A[o + A_SKIN]);
+      e.hair.setHSL(0.08, 0.35, 0.08 + 0.3 * A[o + A_HAIR]).lerp(GREY, elder);
+      e.cloth.set(clanColor(A[o + A_CLAN]));
+      e.dotClan.copy(e.cloth);
+      e.dotGoal.set(GOAL_COLORS[A[o + A_GOAL]] ?? '#fff');
+    }
+    for (const id of this.colorCache.keys()) if (!keep.has(id)) this.colorCache.delete(id);
+  }
+
   /** Fractional sub-step within the current day (playback at slow speeds). */
   private phase(d: DayMsg): number {
     if (this.daysPerSecond <= 0 || this.daysPerSecond > 2) return d.subSteps - 1;
@@ -199,10 +228,12 @@ export class TerrariumView {
     this.scene.background = new THREE.Color('#0e1420').lerp(new THREE.Color('#1f2a3a'), daylight);
     this.terrain?.update(time, daylight);
     this.camps?.animate(time, daylight);
+    const t0 = performance.now();
     this.buildInstances(time);
     const lod = this.chronicle || this.camera.zoom < 1.6;
     const headdress = this.instances.findIndex((h) => h.headdress <= 0);
     this.humans.set(this.instances, lod, this.pointColors, headdress < 0 ? this.instances.length : headdress);
+    this.lastBuildMs = performance.now() - t0;
     this.humans.update(time, daylight, Math.max(5, 3 * this.camera.zoom) * this.renderer.getPixelRatio());
     // Selection ring.
     const sk = this.selectedId >= 0 ? this.instanceIds.indexOf(this.selectedId) : -1;
@@ -294,19 +325,17 @@ export class TerrariumView {
       const sex = A[o + A_SEX];
       const fem = sex === 0 ? Math.min(1, age / 14) : 0;
       const elder = Math.max(0, Math.min(1, (age - 50) / 25));
-      const skinT = A[o + A_SKIN];
-      const skin = new THREE.Color().setHSL(0.07, 0.45, 0.28 + 0.38 * skinT);
-      const hair = new THREE.Color().setHSL(0.08, 0.35, 0.08 + 0.3 * A[o + A_HAIR]).lerp(new THREE.Color('#cfcac2'), elder);
+      const col = this.colorCache.get(id)!;
       const isLeader = A[o + A_LEADER] > 0;
       const inst: HumanInstance = {
         x, y: this.terrain.heightAt(x, y) + lift, z: y,
         heading, phase: (id * 1.7) % 6.28, speed: gesture === G_RUN ? 1 : speed, gesture,
         scale, fem, hunch: elder * 0.45 + (1 - A[o + A_HEALTH]) * 0.2, belly: A[o + A_REP] === 2 ? 1 : 0,
-        cloth: new THREE.Color(clanColor(A[o + A_CLAN])), skin, hair, paint: A[o + A_MARKER],
+        cloth: col.cloth, skin: col.skin, hair: col.hair, paint: A[o + A_MARKER],
         limp: Math.min(1, A[o + A_INJURY] * 2), pallor: Math.max(0, 1 - A[o + A_ENERGY] * 3),
         headdress: isLeader ? 0.8 + 3 * A[o + A_STATUS] : 0,
       };
-      const pc = this.chronicle ? new THREE.Color(clanColor(A[o + A_CLAN])) : new THREE.Color(GOAL_COLORS[A[o + A_GOAL]] ?? '#fff');
+      const pc = this.chronicle ? col.dotClan : col.dotGoal;
       if (isLeader) {
         leaders.push(inst);
         leaderIds.push(id);

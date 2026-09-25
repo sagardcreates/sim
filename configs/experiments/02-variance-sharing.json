@@ -1,0 +1,11 @@
+{
+  "name": "Food variance vs sharing norm",
+  "question": "Does a more variable food supply (more hunting, less plant food, at similar mean) select for stronger sharing norms?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["meanSharingNorm", "storeShare", "freeRiding", "meanOutgroupTrust"],
+  "variants": {
+    "low-variance (plants)": { "resources": { "forageRatePerStep": 0.75, "huntSuccessPerStep": 0.03 } },
+    "baseline": {},
+    "high-variance (game)": { "resources": { "forageRatePerStep": 0.5, "huntSuccessPerStep": 0.08, "huntYieldSd": 5 } }
+  }
+}

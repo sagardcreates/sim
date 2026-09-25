@@ -12,6 +12,7 @@ import { CAUSE_NAMES, GOAL_NAMES, NO_ID } from '../sim/state/agents';
 import { MEM_CAP } from '../sim/state/mind';
 import { WHY_LABELS } from '../sim/systems/decision';
 import { MEM_NAMES } from '../sim/systems/gossip';
+import { describe } from '../sim/history/historian';
 import {
   A_AGE, A_BUILD, A_CLAN, A_ENERGY, A_FEAR, A_FOLLOW, A_GOAL, A_HAIR, A_HEALTH, A_HEIGHT, A_INJURY, A_LEADER, A_MARKER, A_PHASE,
   A_REP, A_SEX, A_SKIN, A_STATUS, ATTR_STRIDE,
@@ -39,33 +40,22 @@ let post: (msg: FromWorker, transfer?: Transferable[]) => void = () => {};
 
 const GESTURE_EVENTS = new Set(['conflict.threat', 'conflict.attack', 'food.theft', 'pair.formed', 'agent.born', 'agent.died', 'hunt.party_kill', 'leader.challenged']);
 
+/** Event types shown in the live chronicle ticker. */
+const TICKER = new Set([
+  'agent.died', 'clan.camp_moved', 'climate.drought_began', 'climate.drought_ended', 'epidemic.outbreak', 'clan.dissolved',
+  'clan.founded', 'agent.expelled', 'leader.changed', 'leader.challenged', 'conflict.attack',
+  'history.alliance', 'history.alliance_ended', 'history.feud', 'history.blood_feud', 'history.feud_ended', 'history.famine',
+  'history.regime', 'history.overtake', 'history.first',
+]);
+
 function describeEvent(s: Simulation, e: SimEvent): string | undefined {
-  const y = Math.floor(e.tick / s.cfg.time.daysPerYear);
-  const n = (id: number) => s.agents.names[id];
-  const d = (e.data ?? {}) as Record<string, unknown>;
-  switch (e.type) {
-    case 'agent.died': {
-      const killer = d.killer as number | undefined;
-      const lead = s.leaders.get(e.clans![0]) === e.agents![0] ? "'s leader" : '';
-      return `Year ${y}: ${s.clans.label(e.clans![0])}${lead ? lead : ''} ${n(e.agents![0])} died at ${d.age} (${d.cause}${killer !== undefined ? ` by ${n(killer)}` : ''}${(d.factors as string[]).length ? ', ' + (d.factors as string[]).join(', ') : ''}).`;
-    }
-    case 'pair.formed': return e.clans![0] !== e.clans![1] ? `Year ${y}: ${n(e.agents![0])} and ${n(e.agents![1])} paired across clans.` : undefined;
-    case 'clan.camp_moved': return `Year ${y}: ${s.clans.label(e.clans![0])} moved camp.`;
-    case 'climate.drought_began': return `Year ${y}: a drought began.`;
-    case 'climate.drought_ended': return `Year ${y}: the drought ended.`;
-    case 'epidemic.outbreak': return `Year ${y}: an epidemic broke out.`;
-    case 'clan.dissolved': return `Year ${y}: ${s.clans.label(e.clans![0])} dissolved.`;
-    case 'clan.founded': return d.initial ? `Year ${y}: ${s.clans.label(e.clans![0])} is among the first clans.` : `Year ${y}: ${s.clans.label(e.clans![0])} split from ${s.clans.label(e.clans![1])}, led by ${n(e.agents![0])}.`;
-    case 'agent.joined_clan': return d.reason === 'founded a new clan' ? undefined : `Year ${y}: ${n(e.agents![0])} joined ${s.clans.label(e.clans![0])} (${d.reason}).`;
-    case 'agent.left_clan': return d.to === -1 ? `Year ${y}: ${n(e.agents![0])} left ${s.clans.label(e.clans![0])} to live alone.` : undefined;
-    case 'agent.expelled': return `Year ${y}: ${n(e.agents![0])} was driven out of ${s.clans.label(e.clans![0])}.`;
-    case 'leader.changed': {
-      const L = d.leader as number;
-      return L >= 0 ? `Year ${y}: ${n(L)} became leader of ${s.clans.label(e.clans![0])}.` : `Year ${y}: ${s.clans.label(e.clans![0])} is now leaderless.`;
-    }
-    case 'leader.challenged': return `Year ${y}: ${n(e.agents![0])} challenged ${n(e.agents![1])}.`;
-    default: return undefined;
+  if (!TICKER.has(e.type)) return undefined;
+  if (e.type === 'agent.died' && (e.data as { killer?: number }).killer === undefined && (e.data as { age: number }).age < 50) {
+    // Ordinary deaths are too frequent for the ticker; keep violent, leader and elder deaths.
+    const lead = s.leaderAt(e.clans![0], e.tick) === e.agents![0];
+    if (!lead) return undefined;
   }
+  return describe(s, e);
 }
 
 function captureSubStep(s: Simulation, subStep: number): void {

@@ -1,5 +1,5 @@
 {
-  "configVersion": 5,
+  "configVersion": 6,
   "time": {
     "daysPerYear": 365,
     "subStepsPerDay": 8
@@ -232,7 +232,12 @@
     "startSpreadRadius": 3,
     "initialPairFraction": 0.85,
     "cultureClanSd": 0.18,
-    "cultureIndividualSd": 0.06
+    "cultureIndividualSd": 0.06,
+    "cultureOverrides": {
+      "residence": -1,
+      "revenge": -1,
+      "lineageWeight": -1
+    }
   },
   "history": {
     "microBufferSize": 20000
@@ -335,17 +340,18 @@
     "challengeAllies": 0.6,
     "challengeStrength": 1.0,
     "challengeDeference": 1.0,
-    "challengeBase": 2.2,
+    "challengeBase": 3.5,
     "challengeTemperature": 0.3,
     "successionTransfer": 0.8,
     "storePriority": 0.5,
     "deferenceBudget": 1.0,
     "deferenceSharpening": 2.0,
-    "keepFraction": 0.8,
+    "keepFraction": 0.6,
     "overtakeRatio": 1.2,
     "conformFriends": 5,
     "conformRate": 0.3,
-    "derivePeriodDays": 7
+    "derivePeriodDays": 7,
+    "challengeMinSupportRatio": 1.0
   },
   "conflict": {
     "temperature": 0.35,
@@ -400,7 +406,7 @@
     "verticalNoiseSd": 0.03,
     "periodDays": 30,
     "innovationSd": 0.01,
-    "markerPatterns": 64,
+    "markerPatterns": 1024,
     "markerInnovation": 0.0005,
     "categoricalInnovation": 0.0005,
     "obliqueRate": 0.05,
@@ -433,5 +439,17 @@
     "anger": 0.3,
     "threatRate": 0.05,
     "witnesses": 3
+  },
+  "historian": {
+    "allianceAffinity": 0.05,
+    "allianceYearsNeeded": 2,
+    "feudWindowYears": 10,
+    "feudMinKillings": 3,
+    "famineMinDeaths": 5,
+    "famineShare": 0.03,
+    "dynastyKinShare": 0.5,
+    "chiefGini": 0.75,
+    "regimePersistYears": 3,
+    "tenureMergeGapYears": 1
   }
 }

@@ -149,6 +149,7 @@ function settle(
   if (ctx === 'grudge') sim.rel.update(c.slot[winner], loser, t, 0, 0, -0.5 * (sim.rel.get(c.slot[winner], loser, t)?.grudge ?? 0), 0);
   c.fear[loser] = Math.min(1, c.fear[loser] + k.fearGain * level);
   c.contestWins[winner] += 1;
+  if (level >= 2) c.lastWinEvent[winner] = eventId;
   // Witnesses nearby shift deference toward the winner (weaker than the loser's).
   sim.spatialConflict.query(c.x[winner], c.y[winner], k.witnessRadius, c.x, c.y, (w) => {
     if (w === winner || w === loser || !c.alive[w]) return;

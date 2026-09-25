@@ -64,13 +64,21 @@ export interface ClanCulture {
   marker: number;
 }
 
-export function randomClanCulture(rng: Rng, sd: number): ClanCulture {
+export function randomClanCulture(rng: Rng, sd: number, cfg?: SimConfig): ClanCulture {
   const t = () => clamp01(rng.normal(0.5, sd * 1.6));
   const leg: [number, number, number, number] = [rng.next(), rng.next(), rng.next(), rng.next()];
-  return {
+  const cc: ClanCulture = {
     sharing: t(), violence: t(), leg, residence: rng.int(3), revenge: rng.int(3),
-    outgroupTrust: t(), kinWeight: t(), ancestorNaming: t(), marker: rng.int(16),
+    outgroupTrust: t(), kinWeight: t(), ancestorNaming: t(), marker: rng.int(cfg?.culture.markerPatterns ?? 64),
   };
+  // Experiment overrides (-1 = no override).
+  const ov = cfg?.init.cultureOverrides;
+  if (ov) {
+    if (ov.residence >= 0) cc.residence = ov.residence;
+    if (ov.revenge >= 0) cc.revenge = ov.revenge;
+    if (ov.lineageWeight >= 0) cc.leg[2] = ov.lineageWeight;
+  }
+  return cc;
 }
 
 /** Individual culture = clan mean + noise (§7: non-identical, randomly seeded). */
@@ -81,13 +89,15 @@ export function assignCulture(sim: Simulation, id: number, cc: ClanCulture, rng:
   c.cSharing[id] = n(cc.sharing);
   c.cViolence[id] = n(cc.violence);
   const w = cc.leg.map((v) => Math.max(0.01, v + rng.normal(0, sd)));
+  if (sim.cfg.init.cultureOverrides.lineageWeight >= 0) w[2] = Math.max(1e-6, sim.cfg.init.cultureOverrides.lineageWeight);
   const sum = w[0] + w[1] + w[2] + w[3];
   c.cLegStrength[id] = w[0] / sum;
   c.cLegGenerosity[id] = w[1] / sum;
   c.cLegLineage[id] = w[2] / sum;
   c.cLegAge[id] = w[3] / sum;
-  c.cResidence[id] = rng.chance(0.9) ? cc.residence : rng.int(3);
-  c.cRevenge[id] = rng.chance(0.9) ? cc.revenge : rng.int(3);
+  const ov = sim.cfg.init.cultureOverrides;
+  c.cResidence[id] = ov.residence >= 0 ? ov.residence : rng.chance(0.9) ? cc.residence : rng.int(3);
+  c.cRevenge[id] = ov.revenge >= 0 ? ov.revenge : rng.chance(0.9) ? cc.revenge : rng.int(3);
   c.cOutgroupTrust[id] = n(cc.outgroupTrust);
   c.cKinWeight[id] = n(cc.kinWeight);
   c.cAncestorNaming[id] = n(cc.ancestorNaming);
@@ -112,7 +122,7 @@ export function populate(sim: Simulation, startEventId: number): void {
       data: { name: clan.name, initial: true },
     });
     clan.history.push(clan.founding.eventId);
-    const culture = randomClanCulture(rng, cfg.init.cultureClanSd);
+    const culture = randomClanCulture(rng, cfg.init.cultureClanSd, cfg);
 
     // Oldest first, so parents always get lower ids than their children.
     const ages = Array.from({ length: cfg.init.agentsPerClan }, () => sampleInitialAgeYears(rng, cfg)).sort((a, b) => b - a);

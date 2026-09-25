@@ -60,6 +60,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ochre); out
   background: rgba(17, 22, 31, .75); border-radius: 6px; padding: 6px 8px; max-width: calc(100% - 24px); }
 #legend span { display: inline-flex; align-items: center; gap: 4px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+#fps { position: absolute; right: 12px; top: 12px; font: 11px var(--mono); color: var(--muted); background: rgba(17,22,31,.7); padding: 3px 6px; border-radius: 4px; }
 #chronicle-overlay { position: absolute; top: 12px; left: 12px; max-width: 300px; background: rgba(17,22,31,.85); border: 1px solid var(--line);
   border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--muted); }
 #drawer { grid-area: drawer; background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 16px; }

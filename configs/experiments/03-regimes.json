@@ -1,0 +1,10 @@
+{
+  "name": "Regime emergence from random legitimacy weights (+ lineage knockout)",
+  "question": "Which regimes emerge from randomly seeded legitimacy weights, and does removing lineage as a source of legitimacy remove hereditary rule?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["regimeEgalitarian", "regimeBigMan", "regimeChiefly", "regimeHereditary", "regimeContested", "kinSuccessionShare", "tenureMean", "leaderYearsShare"],
+  "variants": {
+    "random weights": {},
+    "lineage knockout": { "init": { "cultureOverrides": { "lineageWeight": 0 } }, "leadership": { "lineageRate": 0 } }
+  }
+}

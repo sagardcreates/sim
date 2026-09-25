@@ -111,7 +111,24 @@ export function moveClan(sim: Simulation, i: number, to: number, reason: string,
   const from = c.clanId[i];
   if (from === to) return -1;
   const movers = [i, ...dependentsOf(sim, i)];
+  // Kin (known, adults excluded from dependents) in origin vs destination, for experiment 8.
+  let kinFrom = 0;
+  let kinTo = 0;
+  const kinIds = sim.kin.kinOf(i);
+  for (const k of kinIds) {
+    if (!c.alive[k] || movers.includes(k)) continue;
+    if (from !== LONER && c.clanId[k] === from) kinFrom++;
+    if (to !== LONER && c.clanId[k] === to) kinTo++;
+  }
   let leaveEv = -1;
+  // A leader who leaves stops being that clan's leader at once (derived label follows membership).
+  if (from !== LONER && sim.leaders.get(from) === i) {
+    sim.leaders.delete(from);
+    const ev = sim.events.emit(sim.tick, {
+      type: 'leader.changed', causes: [], agents: [i], clans: [from], data: { leader: NO_ID, previous: i, share: 0, reason: 'left the clan' },
+    });
+    sim.clans.get(from)?.history.push(ev);
+  }
   if (from !== LONER) {
     leaveEv = sim.events.emit(sim.tick, {
       type: 'agent.left_clan', causes, agents: [i], clans: [from], x: c.x[i], y: c.y[i], data: { reason, to, with: movers.length - 1 },
@@ -134,7 +151,7 @@ export function moveClan(sim: Simulation, i: number, to: number, reason: string,
   if (to !== LONER) {
     ev = sim.events.emit(sim.tick, {
       type: 'agent.joined_clan', causes: leaveEv > 0 ? [leaveEv, ...causes] : causes, agents: [i], clans: [to],
-      x: c.x[i], y: c.y[i], data: { reason, from, with: movers.length - 1 },
+      x: c.x[i], y: c.y[i], data: { reason, from, with: movers.length - 1, kinFrom, kinTo },
     });
     sim.clans.get(to)?.history.push(ev);
   }

@@ -118,6 +118,8 @@ export const AGENT_SCHEMA = {
   takenEma: 'f64',
   /** Tick of this agent's last confrontation (one per day). */
   lastConflictTick: 'i32',
+  /** Event id of the last contest this agent won (for causal chains of power). */
+  lastWinEvent: 'i32',
   /** Contests won (strength legitimacy; succession by "contest winners"). */
   contestWins: 'f64',
   /** Hunting party leader this agent joined today (-1 = none / is a leader). */
@@ -194,6 +196,7 @@ export class AgentStore {
     c.partyLeader[id] = NO_ID;
     c.lastConflictTick[id] = NO_ID;
     c.injuredBy[id] = NO_ID;
+    c.lastWinEvent[id] = NO_ID;
     c.injuryEventId[id] = NO_ID;
     c.healthCap[id] = 1;
     c.alive[id] = 1;

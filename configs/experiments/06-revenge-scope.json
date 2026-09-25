@@ -1,0 +1,11 @@
+{
+  "name": "Revenge scope vs feud length and extinctions",
+  "question": "Does widening who counts as a revenge target (killer only / kin / clan) lengthen feuds and cause clan extinctions?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["feuds", "feudMeanYears", "killingsPer1000PersonYears", "extinctions"],
+  "variants": {
+    "killer only": { "init": { "cultureOverrides": { "revenge": 0 } } },
+    "killer's kin": { "init": { "cultureOverrides": { "revenge": 1 } } },
+    "killer's clan": { "init": { "cultureOverrides": { "revenge": 2 } } }
+  }
+}

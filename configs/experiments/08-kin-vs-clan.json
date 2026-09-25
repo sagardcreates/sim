@@ -1,0 +1,11 @@
+{
+  "name": "Kin vs clan loyalty when they conflict",
+  "question": "When kin and clanmates pull different ways, how often do people move toward their kin, and does kin weight in loyalty matter?",
+  "seeds": "1..50", "years": 300,
+  "metrics": ["voluntaryMoves", "movesTowardKinShare", "fissionParentSizeMean"],
+  "variants": {
+    "weak kin pull": { "clans": { "kinWeight": 0.5 } },
+    "baseline": {},
+    "strong kin pull": { "clans": { "kinWeight": 5.0 } }
+  }
+}

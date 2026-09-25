@@ -32,6 +32,7 @@ function copyToward(c: Cols, learner: number, model: number, r: number, pCat: nu
   for (const f of CAT) if (c[f][learner] !== c[f][model] && rng.chance(pCat)) c[f][learner] = c[f][model];
 }
 
+let lineageKnockout = false;
 function normalizeLeg(c: Cols, id: number): void {
   let s = 0;
   for (const f of LEG) {
@@ -39,6 +40,13 @@ function normalizeLeg(c: Cols, id: number): void {
     s += c[f][id];
   }
   for (const f of LEG) c[f][id] /= s;
+  if (lineageKnockout) {
+    // Experiment 3 knockout: lineage never counts as legitimacy.
+    const l = c.cLegLineage[id];
+    c.cLegLineage[id] = 0;
+    const rest = 1 - l;
+    for (const f of LEG) if (f !== 'cLegLineage') c[f][id] /= rest > 0 ? rest : 1;
+  }
 }
 
 function mutate(sim: Simulation, id: number, rng: Rng): void {
@@ -49,7 +57,10 @@ function mutate(sim: Simulation, id: number, rng: Rng): void {
   normalizeLeg(c, id);
   if (rng.chance(cc.markerInnovation)) {
     c.cMarker[id] = rng.int(cc.markerPatterns);
-    sim.events.emit(sim.tick, { type: 'culture.marker_innovation', causes: [], agents: [id], clans: [c.clanId[id]], x: c.x[id], y: c.y[id], data: { marker: c.cMarker[id] } });
+    sim.events.emit(sim.tick, {
+      type: 'culture.marker_innovation', causes: [], agents: [id], clans: [c.clanId[id]], x: c.x[id], y: c.y[id],
+      data: { marker: c.cMarker[id], status: Math.round(sim.statusOf(id) * 1000) / 1000, age: Math.floor(ageYears(sim, id)) },
+    });
   }
   if (rng.chance(cc.categoricalInnovation)) c.cResidence[id] = rng.int(3);
   if (rng.chance(cc.categoricalInnovation)) c.cRevenge[id] = rng.int(3);
@@ -101,6 +112,7 @@ export function obliqueLearning(sim: Simulation, a: number, b: number, rng: Rng)
 /** Monthly, staggered: enculturation, conformity, success bias, innovation. */
 export function cultureSystem(sim: Simulation): void {
   const cc = sim.cfg.culture;
+  lineageKnockout = sim.cfg.init.cultureOverrides.lineageWeight === 0;
   const c = sim.agents.cols;
   const rng = sim.rng.get('culture');
   const dpy = sim.cfg.time.daysPerYear;

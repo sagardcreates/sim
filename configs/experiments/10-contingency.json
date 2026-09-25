@@ -1,0 +1,8 @@
+{
+  "name": "Contingency",
+  "question": "With one configuration and many seeds, which outcomes are robust and which are accidents of history?",
+  "seeds": "1..200", "years": 300,
+  "metrics": ["killingsPer1000PersonYears", "meanClanSize", "extinctions", "alliances", "feuds", "leaderYearsShare", "tenureMean", "cultureFstEnd", "markerDivEnd", "meanSharingNorm"],
+  "variants": { "baseline": {} },
+  "contingency": true
+}

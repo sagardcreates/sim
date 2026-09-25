@@ -14,7 +14,8 @@
     "test": "vitest run",
     "sweep": "tsx src/cli/sweep.ts",
     "compare": "tsx src/cli/compare.ts",
-    "accept": "tsx src/cli/accept.ts"
+    "accept": "tsx src/cli/accept.ts",
+    "history": "tsx src/cli/history.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
