@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Simulation } from '../src/sim/sim';
 import { applyPlayerAction, inviteOdds, raidCheck, replay, type PlayerAction } from '../src/sim/play/player';
+import { animalsOnTile, ANIMALS } from '../src/sim/play/animals';
 import { ageYears } from '../src/sim/systems/common';
 
 function newGame(seed: number, years = 2): Simulation {
@@ -15,7 +16,7 @@ function nearestOthers(sim: Simulation, n: number): number[] {
   const c = sim.agents.cols;
   const p = sim.player!;
   return sim.agents.living
-    .filter((id) => id !== p.id && c.clanId[id] !== p.clanId && ageYears(sim, id) >= 18)
+    .filter((id) => id !== p.id && c.clanId[id] !== p.clanId && c.clanId[id] >= 0 && ageYears(sim, id) >= 18)
     .sort((a, b) => Math.hypot(c.x[a] - c.x[p.id], c.y[a] - c.y[p.id]) - Math.hypot(c.x[b] - c.x[p.id], c.y[b] - c.y[p.id]) || a - b)
     .slice(0, n);
 }
@@ -101,7 +102,7 @@ describe('play mode', () => {
       sim.step();
     }
     const end = sim.tick;
-    const log = p.log.map((e) => ({ tick: e.tick, a: e.a }));
+    const log = p.log.map((e) => ({ tick: e.tick, sub: e.sub, a: e.a }));
     void c;
     // Replay: same seed, run to the spawn tick, then apply the log.
     const re = Simulation.create(7);
@@ -118,6 +119,85 @@ describe('play mode', () => {
     expect(re.player?.id).toBe(sim.player!.id);
     re.run(10);
     sim.run(10);
+    expect(re.stateHash()).toBe(sim.stateHash());
+  });
+
+  it('drifters roam: clanless adults who move their fireside every few days', () => {
+    const sim = newGame(9, 1);
+    const c = sim.agents.cols;
+    const drifters = sim.agents.living.filter((id) => c.clanId[id] === -1);
+    expect(drifters.length).toBeGreaterThanOrEqual(6);
+    const home0 = drifters.map((d) => `${c.ownHomeX[d]},${c.ownHomeY[d]}`);
+    sim.run(12);
+    const moved = drifters.filter((d, k) => c.alive[d] && `${c.ownHomeX[d]},${c.ownHomeY[d]}` !== home0[k]).length;
+    expect(moved).toBeGreaterThan(0);
+  });
+
+  it('someone the player calls out to stops and waits', () => {
+    const sim = newGame(10, 1);
+    const c = sim.agents.cols;
+    sim.beginDay();
+    sim.subStep(0);
+    sim.subStep(1);
+    // Anyone out walking.
+    const walker = sim.agents.living.find((id) => c.phase[id] === 1 /* out */ && c.followId[id] === -1)!;
+    expect(walker).toBeDefined();
+    const r = applyPlayerAction(sim, { kind: 'hail', target: walker });
+    expect(r.ok).toBe(true);
+    const x = c.x[walker];
+    const y = c.y[walker];
+    sim.subStep(2);
+    sim.subStep(3);
+    expect([c.x[walker], c.y[walker]]).toEqual([x, y]);
+    for (let s = 4; s < 8; s++) sim.subStep(s);
+    sim.endDay();
+  });
+
+  it('hunting yields food and grows skill; big game needs skill', () => {
+    const sim = newGame(11, 1);
+    const p = sim.player!;
+    const w = sim.world;
+    const rate = sim.cfg.play.animalTileRate;
+    const tiles: number[] = [];
+    for (let t = 0; t < w.width * w.height; t++) if (animalsOnTile(t, w.biome[t], w.gameDensity[t], rate).length) tiles.push(t);
+    expect(tiles.length).toBeGreaterThan(50);
+    const hare = tiles.find((t) => animalsOnTile(t, w.biome[t], w.gameDensity[t], rate)[0] === 0)!;
+    const s0 = p.skills.hunt;
+    let got = 0;
+    for (let d = 0; d < 6; d++) {
+      for (let k = 0; k < 4; k++) {
+        const before = sim.agents.cols.carriedFood[p.id];
+        applyPlayerAction(sim, { kind: 'hunt', tile: hare, k: 0 });
+        got += sim.agents.cols.carriedFood[p.id] - before;
+        sim.agents.cols.carriedFood[p.id] = 0;
+      }
+      sim.step();
+    }
+    expect(got).toBeGreaterThan(0);
+    expect(p.skills.hunt).toBeGreaterThan(s0);
+    expect(ANIMALS[3].req).toBeGreaterThan(p.skills.hunt); // aurochs still out of reach
+  });
+
+  it('actions taken mid-day replay exactly', () => {
+    const sim = newGame(12, 1);
+    const c = sim.agents.cols;
+    const p = sim.player!;
+    for (let d = 0; d < 6; d++) {
+      sim.beginDay();
+      for (let s = 0; s < 8; s++) {
+        if (s === 2) {
+          const t = sim.agents.living.find((id) => id !== p.id && c.phase[id] === 1)!;
+          applyPlayerAction(sim, { kind: 'hail', target: t });
+          applyPlayerAction(sim, { kind: 'pos', x: c.x[p.id] + 0.3, y: c.y[p.id] });
+        }
+        if (s === 5) applyPlayerAction(sim, { kind: 'gather' });
+        sim.subStep(s);
+      }
+      sim.endDay();
+    }
+    const re = Simulation.create(12);
+    re.run(p.log[0].tick);
+    replay(re, p.log.map((e) => ({ ...e })), sim.tick);
     expect(re.stateHash()).toBe(sim.stateHash());
   });
 });

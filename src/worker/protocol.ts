@@ -9,7 +9,12 @@ export type UiAction =
   | { kind: 'take'; amount: number }
   | { kind: 'help'; verb: HelpVerb; target: number }
   | { kind: 'invite'; target: number }
-  | { kind: 'raid'; clan: number };
+  | { kind: 'raid'; clan: number }
+  | { kind: 'hail'; target: number }
+  | { kind: 'hunt'; tile: number; k: number }
+  | { kind: 'wood' }
+  | { kind: 'deposit' }
+  | { kind: 'build' };
 
 export type ToWorker =
   | { type: 'init'; seed: number; config?: DeepPartial<SimConfig> }
@@ -123,6 +128,11 @@ export interface DayMsg {
   /** Play mode: primary motive code per agent (aligned with ids) and their affinity toward the player. */
   motives?: Uint8Array;
   friendly?: Float32Array;
+  /** Play mode: game density per tile (animals are drawn from it). */
+  gameDensity?: Float32Array;
+  /** Play mode (streamed): seconds this frame spans, and the day fraction it goes from/to (lighting). */
+  frameSeconds?: number;
+  dayFraction?: [number, number];
 }
 
 export interface InspectMsg {
@@ -179,6 +189,21 @@ export interface PlayView {
   raidsLost: number;
   interactRadius: number;
   witnessRadius: number;
+  skills: { hunt: number; gather: number; wood: number };
+  hunger: number;
+  health: number;
+  wood: number;
+  woodCarry: number;
+  campWood: number;
+  shelters: number;
+  shelterWood: number;
+  maxShelters: number;
+  huntsLeft: number;
+  woodLeft: number;
+  hailRadius: number;
+  huntRange: number;
+  animalTileRate: number;
+  night: boolean;
 }
 
 export interface LoadingMsg {

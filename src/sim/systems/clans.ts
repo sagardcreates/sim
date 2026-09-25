@@ -483,3 +483,47 @@ export function modularity(W: Float64Array, n: number, labels: number[]): number
   }
   return q / m2;
 }
+
+/**
+ * Nomadic loners (off unless clans.lonerNomadDays > 0, or play.nomadDays in play mode):
+ * every few days a clanless adult moves their fireside to a watered spot
+ * 6-14 tiles away, away from clan camps, in search of fresh ground. Partners
+ * move together; young children follow their mother.
+ */
+export function nomadSystem(sim: Simulation): void {
+  const every = sim.cfg.clans.lonerNomadDays || (sim.player ? sim.cfg.play.nomadDays : 0);
+  if (!every) return;
+  const c = sim.agents.cols;
+  const W = sim.world.width;
+  const H = sim.world.height;
+  let rng: Rng | undefined;
+  for (const i of sim.agents.living) {
+    if (c.clanId[i] !== LONER || (i + sim.tick) % every !== 0 || isPlayer(sim, i)) continue;
+    if (ageYears(sim, i) < sim.cfg.life.independentAgeYears) continue;
+    const p = c.partnerId[i];
+    if (isAlive(sim, p) && c.clanId[p] === LONER && p < i) continue; // the partner leads the move
+    rng ??= sim.rng.get('nomad');
+    const hx = c.ownHomeX[i];
+    const hy = c.ownHomeY[i];
+    let site = -1;
+    for (let tries = 0; tries < 8 && site < 0; tries++) {
+      const a = rng.next() * Math.PI * 2;
+      const d = 6 + rng.next() * 8;
+      const x = Math.floor(hx + Math.cos(a) * d);
+      const y = Math.floor(hy + Math.sin(a) * d);
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+      const t = nearestCampSite(sim, y * W + x);
+      if (t < 0) continue;
+      const sx = (t % W) + 0.5;
+      const sy = Math.floor(t / W) + 0.5;
+      if (sim.clans.extant().every((cl) => Math.hypot(cl.campX - sx, cl.campY - sy) > 8)) site = t;
+    }
+    if (site < 0) continue;
+    const movers = [i, ...dependentsOf(sim, i)];
+    if (isAlive(sim, p) && c.clanId[p] === LONER) movers.push(p, ...dependentsOf(sim, p));
+    for (const m of new Set(movers)) {
+      c.ownHomeX[m] = (site % W) + 0.5;
+      c.ownHomeY[m] = Math.floor(site / W) + 0.5;
+    }
+  }
+}

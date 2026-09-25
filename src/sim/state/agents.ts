@@ -126,6 +126,8 @@ export const AGENT_SCHEMA = {
   partyLeader: 'i32',
   /** Home tile for today (set at decision time; derived from clan camp / own home). */
   homeTileToday: 'i32',
+  /** Play mode: stopped (called out to by the player) until this absolute sub-step (tick*subSteps+s). */
+  heldUntil: 'i32',
   /** Index into the MindStore pool while alive; -1 when dead. */
   slot: 'i32',
 } as const satisfies Record<string, ColumnKind>;

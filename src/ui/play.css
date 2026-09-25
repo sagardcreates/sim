@@ -155,3 +155,8 @@ a { color: var(--teal); }
 .camp-tag.edge { transform: translate(-50%, -50%); opacity: 0.9; }
 .camp-tag.hot { color: #ffb3a6; }
 .camp-tag.mine { color: var(--ochre); }
+
+.stat.warn { border-color: var(--red); color: #ffb3a6; }
+.beast .sub { margin-top: 2px; }
+#stat-body, #stat-skills { font-size: 13px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.warn-text { color: #ffb3a6; }

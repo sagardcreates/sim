@@ -19,8 +19,10 @@ import {
 
 export function movementSubStep(sim: Simulation, order: readonly number[], s: number, rng: Rng): void {
   const c = sim.agents.cols;
+  const now = sim.tick * sim.cfg.time.subStepsPerDay + s;
   for (const id of order) {
     if (c.followId[id] !== NO_ID) continue; // followers move after their leaders
+    if (c.heldUntil[id] > now) continue; // stopped to talk (play mode)
     const ph = c.phase[id];
     if (ph === PHASE_HOME) continue;
     if (ph === PHASE_OUT) walkOut(sim, id, s);

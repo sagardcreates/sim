@@ -18,7 +18,9 @@ import { clanValue, LONER, moveClan } from '../systems/clans';
 import { onGift } from '../systems/social';
 import { killAgent } from '../systems/mortality';
 import { onKilling } from '../systems/conflict';
-import { makeClanName, makeSyllableSet } from '../names';
+import { makeClanName, makePersonName, makeSyllableSet } from '../names';
+import { animalsOnTile, ANIMALS, huntChance } from './animals';
+import { nearestCampSite } from '../systems/camps';
 
 export type HelpVerb = 'talk' | 'give' | 'tend' | 'back';
 
@@ -30,7 +32,21 @@ export type PlayerAction =
   | { kind: 'take'; amount: number }
   | { kind: 'help'; verb: HelpVerb; target: number; witnesses: number[] }
   | { kind: 'invite'; target: number; witnesses: number[] }
-  | { kind: 'raid'; clan: number };
+  | { kind: 'raid'; clan: number }
+  /** Call out to someone so they stop and wait (play mode's way to get a word in). */
+  | { kind: 'hail'; target: number }
+  /** Hunt the k-th animal on tile `tile` (animals are a pure function of the tile's game density). */
+  | { kind: 'hunt'; tile: number; k: number }
+  | { kind: 'wood' }
+  /** Leave carried food and wood at your camp. */
+  | { kind: 'deposit' }
+  | { kind: 'build' };
+
+export interface PlayerSkills {
+  hunt: number;
+  gather: number;
+  wood: number;
+}
 
 export interface PlayerState {
   id: number;
@@ -49,7 +65,20 @@ export interface PlayerState {
   caught: number;
   raidsWon: number;
   raidsLost: number;
-  log: { tick: number; a: PlayerAction }[];
+  /** Skills grow with practice (0..1). */
+  skills: PlayerSkills;
+  /** 0 = fed, 1 = starving (slows you down). */
+  hunger: number;
+  /** Wood in hand, wood at camp, shelters built. */
+  wood: number;
+  campWood: number;
+  shelters: number;
+  huntsToday: number;
+  woodToday: number;
+  /** Tick the per-day counters belong to. */
+  effortTick: number;
+  /** Actions with the tick and sub-step (-1 = before the day began) they were applied at. */
+  log: { tick: number; sub: number; a: PlayerAction }[];
 }
 
 /** What the UI gets back from an action. */
@@ -76,7 +105,7 @@ export function isPlayerClan(sim: Simulation, clan: number): boolean {
 export function applyPlayerAction(sim: Simulation, a: PlayerAction): ActionResult {
   if (a.kind === 'spawn') {
     const r = spawnPlayer(sim, a.name, a.female);
-    sim.player!.log.push({ tick: sim.tick, a });
+    sim.player!.log.push({ tick: sim.tick, sub: sim.nextSubStep, a });
     return r;
   }
   const p = sim.player;
@@ -85,8 +114,8 @@ export function applyPlayerAction(sim: Simulation, a: PlayerAction): ActionResul
   if (r.ok) {
     // Consecutive position updates within one tick collapse to the last (exact: only the final one matters).
     const last = p.log[p.log.length - 1];
-    if (a.kind === 'pos' && last && last.tick === sim.tick && last.a.kind === 'pos') last.a = a;
-    else p.log.push({ tick: sim.tick, a });
+    if (a.kind === 'pos' && last && last.tick === sim.tick && last.sub === sim.nextSubStep && last.a.kind === 'pos') last.a = a;
+    else p.log.push({ tick: sim.tick, sub: sim.nextSubStep, a });
   }
   return r;
 }
@@ -108,20 +137,52 @@ function apply(sim: Simulation, p: PlayerState, a: PlayerAction): ActionResult {
       return { ok: true, text: '' };
     }
     case 'gather': {
-      if (p.gatherTick !== sim.tick) {
-        p.gatherTick = sim.tick;
-        p.gathersToday = 0;
-      }
+      resetEffort(sim, p);
       if (p.gathersToday >= pc.gatherActionsPerDay) return { ok: false, text: 'You are too tired to gather more today.' };
       const t = Math.floor(c.y[me]) * sim.world.width + Math.floor(c.x[me]);
       const room = pc.carryCapacity - c.carriedFood[me];
-      const got = Math.min(pc.gatherPerAction, sim.world.plantFood[t], room);
+      const got = Math.min(pc.gatherPerAction * (0.6 + p.skills.gather), sim.world.plantFood[t], room);
       if (room <= 0.01) return { ok: false, text: 'Your hands are full.' };
       if (got < 0.1) return { ok: false, text: 'Nothing left to gather here.' };
       sim.world.plantFood[t] -= got;
       c.carriedFood[me] += got;
       p.gathersToday++;
+      p.skills.gather = Math.min(1, p.skills.gather + pc.skillGain * 0.5 * (1 - p.skills.gather));
       return { ok: true, text: `Gathered ${got.toFixed(1)} food.` };
+    }
+    case 'hail':
+      return hail(sim, p, a.target);
+    case 'hunt':
+      return huntAnimal(sim, p, a.tile, a.k);
+    case 'wood': {
+      resetEffort(sim, p);
+      if (p.woodToday >= pc.woodActionsPerDay) return { ok: false, text: 'Your arms are spent. No more wood today.' };
+      const t = Math.floor(c.y[me]) * sim.world.width + Math.floor(c.x[me]);
+      if (sim.world.biome[t] !== 1) return { ok: false, text: 'There are no good trees here. Find a forest.' };
+      if (p.wood >= pc.woodCarry) return { ok: false, text: 'You cannot carry more wood.' };
+      const got = Math.min(pc.woodCarry - p.wood, pc.woodPerAction * (0.6 + p.skills.wood));
+      p.wood += got;
+      p.woodToday++;
+      p.skills.wood = Math.min(1, p.skills.wood + pc.skillGain * 0.5 * (1 - p.skills.wood));
+      return { ok: true, text: `You cut ${got.toFixed(1)} wood.` };
+    }
+    case 'deposit': {
+      const clan = sim.clans.get(p.clanId)!;
+      const food = c.carriedFood[me];
+      clan.foodStore += food;
+      c.carriedFood[me] = 0;
+      p.campWood += p.wood;
+      const w = p.wood;
+      p.wood = 0;
+      if (food < 0.1 && w < 0.1) return { ok: false, text: 'You have nothing to leave at camp.' };
+      return { ok: true, text: `You leave ${[food >= 0.1 ? `${food.toFixed(0)} food` : '', w >= 0.1 ? `${w.toFixed(0)} wood` : ''].filter(Boolean).join(' and ')} at camp.` };
+    }
+    case 'build': {
+      if (p.shelters >= pc.maxShelters) return { ok: false, text: 'Your camp has all the shelters it needs.' };
+      if (p.campWood < pc.shelterWood) return { ok: false, text: `A shelter needs ${pc.shelterWood} wood at camp (you have ${p.campWood.toFixed(0)}).` };
+      p.campWood -= pc.shelterWood;
+      p.shelters++;
+      return { ok: true, text: `You raise a shelter. Your camp has ${p.shelters}; people will think better of living here.` };
     }
     case 'take': {
       const clan = sim.clans.get(p.clanId)!;
@@ -190,16 +251,155 @@ function spawnPlayer(sim: Simulation, name: string, female: boolean): ActionResu
   sim.kin.addBirth(id);
   sim.player = {
     id, clanId: clan.id, suspicion: {}, raidTarget: -1, lastRaidTick: -1_000_000, gathersToday: 0, gatherTick: -1,
-    refusedAt: {}, lastHelp: {}, caught: 0, raidsWon: 0, raidsLost: 0, log: [],
+    refusedAt: {}, lastHelp: {}, caught: 0, raidsWon: 0, raidsLost: 0,
+    skills: { hunt: pc.startSkill, gather: pc.startSkill, wood: pc.startSkill }, hunger: 0, wood: 0, campWood: 0, shelters: 0,
+    huntsToday: 0, woodToday: 0, effortTick: -1, log: [],
   };
   clan.founding.founderId = id;
   clan.founding.eventId = sim.events.emit(sim.tick, {
     type: 'clan.founded', causes: [], agents: [id], clans: [clan.id], x: site.x, y: site.y, data: { name: clan.name, player: true },
   });
   clan.history.push(clan.founding.eventId);
+  spawnDrifters(sim, pc.drifters);
   sim.rebuildDerived();
   sim.leaders.set(clan.id, id);
   return { ok: true, text: `You arrive alone and make camp: ${sim.clans.label(clan.id)}.` };
+}
+
+/**
+ * Drifters: clanless people who roam the valley (loners who move their
+ * fireside every few days; see nomadSystem). Built like any adult from a
+ * template, with no ties. The player meets them away from the camps.
+ */
+function spawnDrifters(sim: Simulation, n: number): void {
+  const c = sim.agents.cols;
+  const rng = sim.rng.get('player');
+  const W = sim.world.width;
+  const adults = sim.agents.living.filter((id) => ageYears(sim, id) >= 18 && ageYears(sim, id) <= 45 && !isPlayer(sim, id));
+  const sets = [...sim.syllables.values()];
+  let prev = NO_ID;
+  for (let k = 0; k < n && adults.length; k++) {
+    const tpl = adults[rng.int(adults.length)];
+    const id = sim.agents.create(makePersonName(rng, sets[rng.int(sets.length)]));
+    const cols = c as unknown as Record<string, { [i: number]: number }>;
+    for (const f of AGENT_FIELDS) cols[f][id] = cols[f][tpl];
+    sim.onCreated(id);
+    for (const f of ['motherId', 'fatherId', 'rearerId', 'partnerId', 'pregnancyFatherId', 'killerId', 'angerTarget', 'followId',
+      'targetTile', 'pairEventId', 'partyLeader', 'injuredBy', 'lastWinEvent', 'injuryEventId', 'deathTick', 'lastConflictTick'] as const) {
+      c[f][id] = NO_ID;
+    }
+    c.alive[id] = 1;
+    const female = rng.chance(0.5);
+    c.sex[id] = female ? SEX_FEMALE : SEX_MALE;
+    c.repState[id] = 0;
+    c.birthTick[id] = sim.tick - Math.floor((18 + rng.int(25)) * sim.cfg.time.daysPerYear);
+    c.clanId[id] = LONER;
+    c.birthClanId[id] = LONER;
+    c.energy[id] = 0.8;
+    c.condition[id] = 0.8;
+    c.health[id] = 1;
+    c.injury[id] = 0;
+    c.carriedFood[id] = 0;
+    c.infectedUntil[id] = 0;
+    c.anger[id] = 0;
+    c.grief[id] = 0;
+    c.goal[id] = GOAL_REST;
+    c.phase[id] = PHASE_HOME;
+    c.heldUntil[id] = 0;
+    // Somewhere away from the camps, by water.
+    let site = -1;
+    for (let tries = 0; tries < 60 && site < 0; tries++) {
+      const t = nearestCampSite(sim, rng.int(sim.world.height) * W + rng.int(W));
+      if (t < 0) continue;
+      const x = (t % W) + 0.5;
+      const y = Math.floor(t / W) + 0.5;
+      if (sim.clans.extant().every((cl) => Math.hypot(cl.campX - x, cl.campY - y) > 9)) site = t;
+    }
+    // Every third drifter travels with the previous one as a couple.
+    if (k % 3 === 2 && prev !== NO_ID && c.sex[prev] !== c.sex[id]) {
+      c.partnerId[id] = prev;
+      c.partnerId[prev] = id;
+      site = Math.floor(c.ownHomeY[prev]) * W + Math.floor(c.ownHomeX[prev]);
+    }
+    if (site < 0) site = Math.floor(c.y[tpl]) * W + Math.floor(c.x[tpl]);
+    c.ownHomeX[id] = (site % W) + 0.5;
+    c.ownHomeY[id] = Math.floor(site / W) + 0.5;
+    c.x[id] = c.ownHomeX[id];
+    c.y[id] = c.ownHomeY[id];
+    c.homeTileToday[id] = site;
+    sim.kin.addBirth(id);
+    sim.events.emit(sim.tick, { type: 'agent.drifter', causes: [], agents: [id], x: c.x[id], y: c.y[id], data: {} });
+    prev = id;
+  }
+}
+
+function resetEffort(sim: Simulation, p: PlayerState): void {
+  if (p.effortTick === sim.tick) return;
+  p.effortTick = sim.tick;
+  p.huntsToday = 0;
+  p.woodToday = 0;
+  if (p.gatherTick !== sim.tick) {
+    p.gatherTick = sim.tick;
+    p.gathersToday = 0;
+  }
+}
+
+/** Someone the player calls to stops and waits a while, unless they want nothing to do with them. */
+function hail(sim: Simulation, p: PlayerState, t: number): ActionResult {
+  const c = sim.agents.cols;
+  const pc = sim.cfg.play;
+  if (!isAlive(sim, t) || t === p.id) return { ok: false, text: 'They are gone.' };
+  const name = sim.agents.displayName(t);
+  const S = sim.cfg.time.subStepsPerDay;
+  if (sim.nextSubStep < 0 || sim.nextSubStep >= S) return { ok: false, text: 'It is night; people are by their fires.' };
+  const v = sim.rel.get(c.slot[t], p.id, sim.tick);
+  if ((v?.grudge ?? 0) > 0.3 || (v?.aff ?? 0) < -0.3) return { ok: false, text: `${name} glares at you and walks on.` };
+  const friendly = (v?.aff ?? 0) > 0.3;
+  const hold = friendly ? pc.hailHoldFriend : pc.hailHoldStranger;
+  const now = sim.tick * S + sim.nextSubStep;
+  c.heldUntil[t] = Math.max(c.heldUntil[t], now + hold);
+  sim.rel.update(c.slot[t], p.id, sim.tick, 0, 0, 0, 0.03);
+  return { ok: true, text: friendly ? `${name} smiles and waits for you.` : `${name} stops and eyes you, waiting.` };
+}
+
+/** Keeps someone you are dealing with from walking off mid-conversation. */
+function engage(sim: Simulation, t: number): void {
+  const S = sim.cfg.time.subStepsPerDay;
+  if (sim.nextSubStep < 0 || sim.nextSubStep >= S) return;
+  const c = sim.agents.cols;
+  c.heldUntil[t] = Math.max(c.heldUntil[t], sim.tick * S + sim.nextSubStep + 1);
+}
+
+function huntAnimal(sim: Simulation, p: PlayerState, tile: number, k: number): ActionResult {
+  const c = sim.agents.cols;
+  const pc = sim.cfg.play;
+  const w = sim.world;
+  resetEffort(sim, p);
+  if (p.huntsToday >= pc.huntsPerDay) return { ok: false, text: 'You are too worn out to hunt again today.' };
+  const kinds = animalsOnTile(tile, w.biome[tile], w.gameDensity[tile], pc.animalTileRate);
+  if (k < 0 || k >= kinds.length) return { ok: false, text: 'The animal has slipped away.' };
+  const kind = ANIMALS[kinds[k]];
+  p.huntsToday++;
+  const rng = sim.rng.get('player');
+  const chance = huntChance(kind, p.skills.hunt) * (1 - 0.5 * p.hunger);
+  let hurt = '';
+  if (kind.risk > 0 && rng.chance(kind.risk * (1.2 - p.skills.hunt))) {
+    c.health[p.id] = Math.max(0.3, c.health[p.id] - pc.huntWound);
+    hurt = ` The ${kind.name} wounds you.`;
+  }
+  if (!rng.chance(chance)) {
+    p.skills.hunt = Math.min(1, p.skills.hunt + pc.skillGain * 0.25 * (1 - p.skills.hunt));
+    return { ok: true, text: `The ${kind.name} escapes.${hurt}` };
+  }
+  w.gameDensity[tile] *= 1 - kind.depletion;
+  const room = pc.carryCapacity - c.carriedFood[p.id];
+  const got = Math.min(kind.food, room);
+  c.carriedFood[p.id] += got;
+  // Harder game teaches more.
+  p.skills.hunt = Math.min(1, p.skills.hunt + pc.skillGain * (0.6 + 2 * kind.req) * (1 - p.skills.hunt));
+  sim.stats.day.kills++;
+  const left = kind.food - got;
+  return { ok: true, text: `You bring down a ${kind.name}: ${kind.food} food${left > 0.5 ? ` (you can only carry ${got.toFixed(0)})` : ''}.${hurt}` };
 }
 
 /** A watered, fertile spot as far as possible from existing camps. */
@@ -305,6 +505,7 @@ function help(sim: Simulation, p: PlayerState, verb: HelpVerb, t: number, witnes
     text = `You promise to stand with ${name} against ${sim.agents.displayName(g.other)}.`;
   }
   p.lastHelp[key] = sim.tick;
+  engage(sim, t);
   const seenBy = observe(sim, p, t, verb, witnesses);
   return { ok: true, text, seenBy };
 }
@@ -363,7 +564,8 @@ export function inviteOdds(sim: Simulation, t: number): InviteOdds {
   // How they feel about the stranger who has been good to them.
   const v = sim.rel.get(c.slot[t], pl.id, sim.tick);
   const regard = pc.inviteAffinityWeight * Math.max(0, v?.aff ?? 0) + pc.inviteDeferenceWeight * (v?.def ?? 0) - 2 * (v?.grudge ?? 0);
-  const z = regard + vYou + food - vOwn - cc.switchMargin;
+  const shelter = pc.shelterInviteBonus * pl.shelters;
+  const z = regard + vYou + food + shelter - vOwn - cc.switchMargin;
   const p = 1 / (1 + Math.exp(-z / pc.inviteTemperature));
   return {
     p,
@@ -371,6 +573,7 @@ export function inviteOdds(sim: Simulation, t: number): InviteOdds {
       { label: 'how they feel about you', value: regard },
       { label: 'ties to your people', value: vYou },
       { label: 'food in your camp', value: food },
+      { label: 'shelters at your camp', value: shelter },
       { label: own === LONER ? 'life alone' : `ties to ${sim.clans.get(own)?.name ?? 'their clan'}`, value: -vOwn },
       { label: 'reluctance to move', value: -cc.switchMargin },
     ],
@@ -458,6 +661,7 @@ export function playerSystem(sim: Simulation): void {
   const c = sim.agents.cols;
   const pc = sim.cfg.play;
   const rng = sim.rng.get('player');
+  eatAndRest(sim, p);
   if (p.raidTarget >= 0) resolveRaid(sim, p, p.raidTarget, rng);
   for (const key of Object.keys(p.suspicion).sort((a, b) => Number(a) - Number(b))) {
     const clan = Number(key);
@@ -470,6 +674,25 @@ export function playerSystem(sim: Simulation): void {
     p.suspicion[key] = Math.max(0, p.suspicion[key] * (1 - pc.suspicionDecayPerDay) - 0.002);
   }
   void c;
+}
+
+/** Each night the player eats from what they carry (or their camp store if home) and heals a little. */
+function eatAndRest(sim: Simulation, p: PlayerState): void {
+  const c = sim.agents.cols;
+  const pc = sim.cfg.play;
+  let need = pc.playerNeed;
+  const fromHand = Math.min(need, c.carriedFood[p.id]);
+  c.carriedFood[p.id] -= fromHand;
+  need -= fromHand;
+  const camp = sim.clans.get(p.clanId);
+  if (need > 0 && camp && Math.hypot(camp.campX - c.x[p.id], camp.campY - c.y[p.id]) < 4) {
+    const fromStore = Math.min(need, camp.foodStore);
+    camp.foodStore -= fromStore;
+    need -= fromStore;
+  }
+  p.hunger = need > 0.01 ? Math.min(1, p.hunger + pc.hungerPerMissedDay * (need / pc.playerNeed)) : Math.max(0, p.hunger - 0.35);
+  c.health[p.id] = Math.min(c.healthCap[p.id], c.health[p.id] + (p.hunger < 0.5 ? pc.playerHealPerNight : 0));
+  c.energy[p.id] = 1 - 0.8 * p.hunger;
 }
 
 function caught(sim: Simulation, p: PlayerState, clan: number, rng: import('../rng').Rng): void {
@@ -564,11 +787,21 @@ export function snapshotPlayer(p: PlayerState | null): PlayerState | null {
 }
 
 /** Replays a recorded game: same seed and config, then the logged actions at their ticks. */
-export function replay(sim: Simulation, log: { tick: number; a: PlayerAction }[], untilTick: number): void {
+export function replay(sim: Simulation, log: { tick: number; sub: number; a: PlayerAction }[], untilTick: number): void {
   let k = 0;
-  while (sim.tick < untilTick || k < log.length) {
-    while (k < log.length && log[k].tick === sim.tick) applyPlayerAction(sim, log[k++].a);
-    if (sim.tick >= untilTick) break;
-    sim.step();
+  const S = sim.cfg.time.subStepsPerDay;
+  const applyAt = (sub: number) => {
+    while (k < log.length && log[k].tick === sim.tick && log[k].sub === sub) applyPlayerAction(sim, log[k++].a);
+  };
+  while (sim.tick < untilTick) {
+    applyAt(-1);
+    sim.beginDay();
+    for (let s = 0; s < S; s++) {
+      applyAt(s);
+      sim.subStep(s);
+    }
+    applyAt(S);
+    sim.endDay();
   }
+  applyAt(-1);
 }

@@ -14,7 +14,7 @@ import { WHY_LABELS } from '../systems/decision';
 import { isPlayer, needsTending, topGrudge, type HelpVerb } from './player';
 
 import {
-  M_AMBITION, M_HUNGRY, M_HURT, M_KIDS_HUNGRY, M_LEADER, M_LONELY, M_NONE, M_PARTNER, M_REVENGE, M_SICK, M_UNHAPPY,
+  M_AMBITION, M_DRIFTER, M_HUNGRY, M_HURT, M_KIDS_HUNGRY, M_LEADER, M_LONELY, M_NONE, M_PARTNER, M_REVENGE, M_SICK, M_UNHAPPY,
 } from './motive-codes';
 
 export * from './motive-codes';
@@ -58,7 +58,7 @@ export function motivesOf(sim: Simulation, id: number): Motive[] {
   const g = topGrudge(sim, id);
   if (g.other !== NO_ID) out.push({ code: M_REVENGE, text: `wants revenge on ${sim.agents.displayName(g.other)}`, verb: 'back' });
   if (age >= 16) {
-    if (clan === LONER) out.push({ code: M_UNHAPPY, text: 'lives alone, without a clan' });
+    if (clan === LONER) out.push({ code: M_DRIFTER, text: 'wanders alone, without a clan' });
     else if (loyalty(sim, id) < sim.cfg.play.unhappyLoyalty) out.push({ code: M_UNHAPPY, text: `has few ties in ${sim.clans.get(clan)?.name ?? 'their clan'}` });
     if (tieCount(sim, id) < 2) out.push({ code: M_LONELY, text: 'has few friends', verb: 'talk' });
     if (!isAlive(sim, c.partnerId[id]) && age >= sim.cfg.life.pairMinAgeYears && age < 45) out.push({ code: M_PARTNER, text: 'is looking for a partner' });

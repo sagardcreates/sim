@@ -14,7 +14,7 @@ import { ClanRegistry, type Clan } from './state/clans';
 import { MindStore, type MindSnapshot } from './state/mind';
 import { KinIndex, Pedigree } from './state/pedigree';
 import { RelationStore, type RelationSnapshot } from './state/relations';
-import { clanMembershipSystem, yearlyClanSystem } from './systems/clans';
+import { clanMembershipSystem, nomadSystem, yearlyClanSystem } from './systems/clans';
 import { fieldEncounters, nightSocialSystem } from './systems/social';
 import { challengeSystem, deferenceDriftSystem, leadershipSystem } from './systems/leadership';
 import { cultureDivergence, cultureSystem } from './systems/culture';
@@ -65,6 +65,8 @@ export class Simulation {
   graves: Grave[] = [];
   /** Historian's running state (labels are part of history, so this is state). */
   historian: HistorianState = initialHistorian();
+  /** Next movement sub-step of the current day (play mode streams sub-steps; derived bookkeeping). */
+  nextSubStep = -1;
   /** Play mode: the human player's state (null in research runs). */
   player: PlayerState | null = null;
   // --- caches / derived (not state; rebuilt deterministically) ---
@@ -220,6 +222,13 @@ export class Simulation {
 
   /** Advance one day, running systems in §5 order. */
   step(): void {
+    this.beginDay();
+    for (let s = 0; s < this.cfg.time.subStepsPerDay; s++) this.subStep(s);
+    this.endDay();
+  }
+
+  /** Morning: climate, resources, metabolism, leadership, decisions. (Play mode streams the day in parts.) */
+  beginDay(): void {
     this.rebuildDerived();
     climateSystem(this);
     resourcesSystem(this);
@@ -228,14 +237,20 @@ export class Simulation {
     this.rebuildDerived();
     if (this.tick % this.cfg.leadership.derivePeriodDays === 0) leadershipSystem(this);
     decisionSystem(this);
-    const orderRng = this.rng.get('order');
-    const moveRng = this.rng.get('movement');
-    for (let s = 0; s < this.cfg.time.subStepsPerDay; s++) {
-      const order = this.shuffledLiving(orderRng);
-      movementSubStep(this, order, s, moveRng);
-      fieldEncounters(this, this.rng.get('encounters'));
-      this.onSubStep?.(this, s);
-    }
+    this.nextSubStep = 0;
+  }
+
+  /** One movement/work sub-step of the day (0..subStepsPerDay-1), then field encounters. */
+  subStep(s: number): void {
+    const order = this.shuffledLiving(this.rng.get('order'));
+    movementSubStep(this, order, s, this.rng.get('movement'));
+    fieldEncounters(this, this.rng.get('encounters'));
+    this.nextSubStep = s + 1;
+    this.onSubStep?.(this, s);
+  }
+
+  /** Evening and night: drink, share, socialize, births, sickness, deaths, clans, culture; then the year's end. */
+  endDay(): void {
     drinkAtNight(this);
     // The player's hand-held food is theirs to give; provisioning doesn't touch it.
     const pid = this.player ? this.player.id : -1;
@@ -251,12 +266,14 @@ export class Simulation {
     this.rebuildDerived();
     campSystem(this);
     clanMembershipSystem(this);
+    nomadSystem(this);
     playerSystem(this);
     deferenceDriftSystem(this);
     challengeSystem(this);
     cultureSystem(this);
     this.checkDissolution();
     this.tick++;
+    this.nextSubStep = -1;
     if (this.dayOfYear === 0) {
       this.rebuildDerived();
       yearlyClanSystem(this);

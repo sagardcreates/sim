@@ -5,6 +5,7 @@
  * writes to sim state.
  */
 import * as THREE from 'three';
+import { Animals, type AnimalSpot } from './animals';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import {
   A_AGE, A_CLAN, A_ENERGY, A_FOLLOW, A_GOAL, A_HAIR, A_HEALTH, A_HEIGHT, A_INJURY, A_LEADER, A_MARKER, A_REP, A_SEX, A_SKIN,
@@ -65,6 +66,9 @@ export class TerrariumView {
   /** Play mode: the player's avatar is drawn where the player's own controls put it (client-side). */
   player: { id: number; x: number; y: number; heading: number; speed: number; gesture: number } | null = null;
   private playerRing?: THREE.Mesh;
+  private animals?: Animals;
+  /** Play mode: draw animals from game density (share of stocked tiles holding a herd), or 0 = off. */
+  animalTileRate = 0;
   private reachRing?: THREE.Mesh;
   private sightRing?: THREE.Mesh;
   /** Screen position of the followed agent (for the thought bubble), or null. */
@@ -126,6 +130,9 @@ export class TerrariumView {
     this.gestures.clear();
     this.cur = this.prev = undefined;
     this.buildTerritoryOverlay(w.width, w.height);
+    if (this.animals) this.scene.remove(this.animals.group);
+    this.animals = new Animals(this.terrain, w.biome, w.width, w.height);
+    this.scene.add(this.animals.group);
   }
 
   onDay(d: DayMsg): void {
@@ -205,6 +212,11 @@ export class TerrariumView {
 
   /** Fractional sub-step within the current day (playback at slow speeds). */
   private phase(d: DayMsg): number {
+    if (d.frameSeconds !== undefined) {
+      // Streamed frames (play mode): interpolate over the frame's own duration.
+      if (d.frameSeconds <= 0) return d.subSteps - 1;
+      return Math.min(1, (performance.now() - this.dayArrivedAt) / 1000 / d.frameSeconds) * (d.subSteps - 1);
+    }
     if (this.daysPerSecond <= 0 || this.daysPerSecond > 2) return d.subSteps - 1;
     const p = Math.min(1, (performance.now() - this.dayArrivedAt) / 1000 * this.daysPerSecond);
     return p * (d.subSteps - 1);
@@ -222,6 +234,11 @@ export class TerrariumView {
 
   /** Time of day in [0,1] for lighting: sub-steps span dawn..dusk; fast speeds stay in daylight. */
   daylight(): number {
+    if (this.cur?.dayFraction) {
+      const [f0, f1] = this.cur.dayFraction;
+      const t = f0 + (f1 - f0) * (this.phase(this.cur) / Math.max(1, this.cur.subSteps - 1));
+      return 0.22 + 0.78 * Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, t * 0.92 + 0.04))), 0.6);
+    }
     if (!this.cur || this.daysPerSecond > 2 || this.daysPerSecond <= 0) return 1;
     const t = this.phase(this.cur) / (this.cur.subSteps - 1);
     return 0.25 + 0.75 * Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, t * 0.9 + 0.05))), 0.6);
@@ -253,6 +270,11 @@ export class TerrariumView {
       this.selectionRing.scale.setScalar(pulse * (lod ? 2.5 : 1));
     }
     this.updatePlayerRings(time);
+    if (this.animals && this.animalTileRate > 0) {
+      const c = this.player ?? { x: this.controls.target.x, y: this.controls.target.z };
+      this.animals.update(this.cur?.gameDensity, c.x, c.y, 24, time, this.player?.x ?? -99, this.player?.y ?? -99, this.animalTileRate);
+      this.animals.setDaylight(daylight);
+    }
     // Follow-cam.
     this.followScreen = null;
     if (this.mode === 'follow' && this.followId >= 0) {
@@ -421,6 +443,22 @@ export class TerrariumView {
     this.reachRing?.position.set(p.x, h, p.y);
     this.sightRing?.position.set(p.x, h, p.y);
     this.playerRing?.scale.setScalar(1 + 0.1 * Math.sin(time * 4));
+  }
+
+  /** Animal under a screen point (play mode), or null. */
+  pickAnimal(clientX: number, clientY: number): AnimalSpot | null {
+    if (!this.animals) return null;
+    return this.animals.pick(clientX, clientY, this.camera, this.renderer.domElement.getBoundingClientRect());
+  }
+
+  /** All animals currently drawn (play mode). */
+  animalSpots(): AnimalSpot[] {
+    return this.animals?.spots ?? [];
+  }
+
+  /** Where the k-th animal of a tile is drawn now, or null if it is gone. */
+  animalAt(tile: number, k: number): AnimalSpot | null {
+    return this.animals?.spots.find((a) => a.tile === tile && a.k === k) ?? null;
   }
 
   /** Current fractional sub-step being shown (what the player sees). */

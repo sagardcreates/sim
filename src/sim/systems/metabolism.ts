@@ -18,10 +18,7 @@ export function metabolismSystem(sim: Simulation): void {
   // Iterate a copy: starvation deaths mutate `living`.
   const pid = playerId(sim);
   for (const id of [...sim.agents.living]) {
-    if (id === pid) {
-      c.energy[id] = 1; // the player's own body is not simulated
-      continue;
-    }
+    if (id === pid) continue; // the player's hunger is kept by play/player.ts
     const age = ageYears(sim, id);
     const size = sizeFactor(sim, age);
     let need = mc.basalFraction * mc.adultNeed * size;

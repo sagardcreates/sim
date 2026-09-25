@@ -100,7 +100,7 @@ function clanViews(s: Simulation): ClanView[] {
   });
 }
 
-function postDay(s: Simulation): void {
+function postDay(s: Simulation, extra: Partial<DayMsg> = {}): void {
   const n = ids.length;
   const attrs = new Float32Array(n * ATTR_STRIDE);
   const c = s.agents.cols;
@@ -172,8 +172,10 @@ function postDay(s: Simulation): void {
     msg.play = playView(s);
     msg.motives = motives;
     msg.friendly = friendly;
-    transfer.push(motives.buffer, friendly.buffer);
+    msg.gameDensity = Float32Array.from(s.world.gameDensity);
+    transfer.push(motives.buffer, friendly.buffer, msg.gameDensity.buffer);
   }
+  Object.assign(msg, extra);
   dayEvents = [];
   oldCamps = [];
   post(msg, transfer);
@@ -189,6 +191,11 @@ function loop(): void {
   const now = performance.now();
   const dt = (now - last) / 1000;
   last = now;
+  if (playMode) {
+    playTick(sim, dt);
+    setTimeout(loop, 4);
+    return;
+  }
   if (daysPerSecond > 0) {
     carry += Number.isFinite(daysPerSecond) ? dt * daysPerSecond : Infinity;
     const budgetEnd = now + 30;
@@ -332,6 +339,11 @@ function start(s: Simulation): void {
     plantCapacity: w.plantCapacity, seed,
     camps: s.clans.extant().map((c) => ({ id: c.id, label: s.clans.label(c.id), x: c.campX, y: c.campY })),
   });
+  if (playMode) {
+    s.onSubStep = undefined;
+    postPlayFrame(s, new Map(), 0);
+    return;
+  }
   // Emit current positions so the view has something to draw while paused.
   for (let k = 0; k < s.cfg.time.subStepsPerDay; k++) captureSubStep(s, k);
   // Graves and camp history already present (after a scrub) are sent in full.
@@ -468,10 +480,24 @@ function act(s: Simulation, a: UiAction, subStep: number): void {
       if (Math.hypot(q.x - px, q.y - py) <= pc.witnessRadius) witnesses.push(w);
     }
     action = a.kind === 'help' ? { kind: 'help', verb: a.verb, target: a.target, witnesses } : { kind: 'invite', target: a.target, witnesses };
-  } else if (a.kind === 'take') {
+  } else if (a.kind === 'take' || a.kind === 'deposit' || a.kind === 'build') {
     const camp = s.clans.get(p.clanId)!;
-    if (Math.hypot(camp.campX - px, camp.campY - py) > 3) {
-      post({ type: 'actResult', ok: false, text: 'Go back to your camp to take from its store.', seenBy: [] });
+    if (Math.hypot(camp.campX - px, camp.campY - py) > 3.5) {
+      post({ type: 'actResult', ok: false, text: 'Go back to your camp first.', seenBy: [] });
+      return;
+    }
+    action = a;
+  } else if (a.kind === 'hail') {
+    const t = shownPos(s, a.target, subStep);
+    if (Math.hypot(t.x - px, t.y - py) > pc.hailRadius) {
+      post({ type: 'actResult', ok: false, text: 'They are too far to hear you.', seenBy: [] });
+      return;
+    }
+    action = a;
+  } else if (a.kind === 'hunt') {
+    const W = s.world.width;
+    if (Math.hypot((a.tile % W) + 0.5 - px, Math.floor(a.tile / W) + 0.5 - py) > pc.huntRange) {
+      post({ type: 'actResult', ok: false, text: 'Get closer to the animal first.', seenBy: [] });
       return;
     }
     action = a;
@@ -511,7 +537,69 @@ function playView(s: Simulation): PlayView {
     gathersLeft: p.gatherTick === s.tick ? Math.max(0, pc.gatherActionsPerDay - p.gathersToday) : pc.gatherActionsPerDay,
     caught: p.caught, raidsWon: p.raidsWon, raidsLost: p.raidsLost,
     interactRadius: pc.interactRadius, witnessRadius: pc.witnessRadius,
+    skills: { ...p.skills }, hunger: p.hunger, health: c.health[p.id],
+    wood: p.wood, woodCarry: pc.woodCarry, campWood: p.campWood, shelters: p.shelters, shelterWood: pc.shelterWood, maxShelters: pc.maxShelters,
+    huntsLeft: p.effortTick === s.tick ? Math.max(0, pc.huntsPerDay - p.huntsToday) : pc.huntsPerDay,
+    woodLeft: p.effortTick === s.tick ? Math.max(0, pc.woodActionsPerDay - p.woodToday) : pc.woodActionsPerDay,
+    hailRadius: pc.hailRadius, huntRange: pc.huntRange, animalTileRate: pc.animalTileRate,
+    night: s.nextSubStep < 0 || s.nextSubStep >= s.cfg.time.subStepsPerDay,
   };
+}
+
+// ---------------------------------------------------------------- play-mode streaming
+
+/**
+ * Play mode streams the day one slot at a time (each movement sub-step, then
+ * the night), so the player acts in the present and whoever they call out to
+ * stops right there. Each frame carries the previous and current positions;
+ * the view interpolates between them over the slot's duration.
+ */
+let slotCarry = 0;
+
+function playTick(s: Simulation, dt: number): void {
+  if (daysPerSecond <= 0) return;
+  const slots = s.cfg.time.subStepsPerDay + 1;
+  const slotSeconds = 1 / (daysPerSecond * slots);
+  slotCarry += dt / slotSeconds;
+  if (slotCarry > 3) slotCarry = 1; // can't keep up: don't pile up debt
+  if (slotCarry >= 1) {
+    slotCarry -= 1;
+    advanceSlot(s, slotSeconds);
+  }
+}
+
+function advanceSlot(s: Simulation, slotSeconds: number): void {
+  const S = s.cfg.time.subStepsPerDay;
+  const c = s.agents.cols;
+  const before = new Map<number, [number, number]>();
+  for (const id of s.agents.living) before.set(id, [c.x[id], c.y[id]]);
+  const from = s.nextSubStep < 0 ? 0 : s.nextSubStep;
+  if (s.nextSubStep < 0) {
+    s.beginDay();
+    s.subStep(0);
+  } else if (s.nextSubStep < S) {
+    s.subStep(s.nextSubStep);
+  } else {
+    s.endDay();
+  }
+  const to = s.nextSubStep < 0 ? S + 1 : s.nextSubStep;
+  postPlayFrame(s, before, slotSeconds, from / (S + 1), to / (S + 1));
+}
+
+function postPlayFrame(s: Simulation, before: Map<number, [number, number]>, slotSeconds: number, f0 = 0, f1 = 0): void {
+  const c = s.agents.cols;
+  ids = Int32Array.from(s.agents.living);
+  const n = ids.length;
+  frames = new Float32Array(2 * n * 2);
+  for (let i = 0; i < n; i++) {
+    const id = ids[i];
+    const b = before.get(id);
+    frames[2 * i] = b ? b[0] : c.x[id];
+    frames[2 * i + 1] = b ? b[1] : c.y[id];
+    frames[(n + i) * 2] = c.x[id];
+    frames[(n + i) * 2 + 1] = c.y[id];
+  }
+  postDay(s, { subSteps: 2, frameSeconds: slotSeconds, dayFraction: [f0, f1] });
 }
 
 function person(s: Simulation, id: number): PersonMsg {

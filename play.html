@@ -17,14 +17,18 @@
       <div class="stat" id="stat-clan" title="Your clan">—</div>
       <div class="stat" id="stat-rank" title="Clans ranked by size">—</div>
       <div class="stat food" title="Food in your hands / your camp store"><span id="stat-food">—</span><span class="bar"><span id="food-fill"></span></span></div>
+
       <div class="spacer"></div>
       <div class="date" id="date">—</div>
       <div class="group" id="speeds" role="group" aria-label="Game speed"></div>
       <button id="btn-help" title="How to play (H)">?</button>
     </header>
 
-    <aside id="watch" aria-label="How other clans see you">
-      <div class="label">Suspicion</div>
+    <aside id="watch" aria-label="You, and how other clans see you">
+      <div class="label">You</div>
+      <div id="stat-body" title="Hunger and health">—</div>
+      <div id="stat-skills" title="Hunting · gathering · woodcutting skill (grow with practice); wood in hand">—</div>
+      <div class="label" style="margin-top:10px">Suspicion</div>
       <div id="suspicion"></div>
       <div id="watchers"></div>
     </aside>
@@ -41,10 +45,12 @@
 
     <footer id="hud-bottom">
       <button id="btn-gather" title="Gather food where you stand (G)"><kbd>G</kbd> Gather</button>
-      <button id="btn-take" title="Take food from your camp store (at camp) (F)"><kbd>F</kbd> Take from store</button>
+      <button id="btn-wood" title="Cut wood in a forest (C)"><kbd>C</kbd> Cut wood</button>
+      <button id="btn-store" title="Leave your food and wood at camp (V)"><kbd>V</kbd> Store at camp</button>
+      <button id="btn-take" title="Take food from your camp store (at camp) (F)"><kbd>F</kbd> Take food</button>
       <button id="btn-home" title="Walk back to your camp (B)"><kbd>B</kbd> Go home</button>
       <button id="btn-clan" title="Your clan and raids (R)"><kbd>R</kbd> Clan &amp; raids</button>
-      <div id="hint">WASD / arrows or click the ground to walk · click a person · right-drag to turn · wheel to zoom</div>
+      <div id="hint">WASD / arrows or click the ground to walk · click a person or an animal · right-drag to turn · wheel to zoom</div>
     </footer>
 
     <ol id="toasts" aria-live="polite"></ol>
@@ -85,7 +91,10 @@
           <li><b>Help them</b> when you are close (inner ring): talk, give food, tend wounds, or back their grudge. Each builds real affection and respect toward you.</li>
           <li><b>Invite</b> them to your clan. They decide the way everyone here does, weighing their ties to you and your people against their ties at home. Lonely, unhappy and hungry people come easiest, and their partners and children may follow.</li>
           <li><b>Be careful who sees.</b> Anyone of their clan inside the red ring notices you courting their people; their leader counts most. When a clan's suspicion fills, they come at night and <b>kill five of your people</b>. Suspicion fades with time.</li>
-          <li><b>Food</b>: gather it (G) or take it from your camp's store (F), which your people fill.</li>
+          <li><b>Call out</b> 📣 to someone within earshot: unless they dislike you, they stop and wait for you. Clanless <b>drifters</b> roam the valley; they have no clan to leave.</li>
+          <li><b>Hunt</b>: click an animal to see what it takes. 🐇 Hares are easy; 🦌 deer, 🐗 boar and 🐂 aurochs need more skill, and the dangerous ones can wound you. Every hunt makes you better; big game feeds many.</li>
+          <li><b>Food</b>: you get hungry each night and eat what you carry (or your camp's store if you sleep at home); hunger slows you. Gather plants (G), take from your store (F), or bring food home (V) for your people.</li>
+          <li><b>Wood</b>: cut it in forests (C), bring it home (V), and build shelters (R panel). A well-built camp draws people.</li>
           <li><b>Raid</b> (R) once you have five grown fighters: steal a clan's store, and pay in blood. Every killing leaves grudges, and grudges lead to feuds.</li>
           <li><b>Goal</b>: make your clan the largest in the valley.</li>
         </ul>

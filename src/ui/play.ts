@@ -11,6 +11,7 @@ import { clanColor } from '../render/palette';
 import { G_NONE, G_OFFER } from '../render/humans';
 import { TerrariumView } from '../render/view';
 import { MOTIVE_ICONS, MOTIVE_SHORT } from '../sim/play/motive-codes';
+import { ANIMALS, huntChance } from '../sim/play/animals';
 import type { HelpVerb } from '../sim/play/player';
 import {
   A_AGE, A_CLAN, ATTR_STRIDE,
@@ -24,12 +25,12 @@ interface SimChannel {
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const SPEEDS: [string, number][] = [['❚❚', 0], ['1×', 1 / 12], ['2×', 1 / 6], ['4×', 1 / 3]];
+const SPEEDS: [string, number][] = [['❚❚', 0], ['1×', 1 / 30], ['2×', 1 / 15], ['4×', 1 / 7.5]];
 /** Walking speed in tiles per second on open ground. */
 const WALK = 3.4;
 const LABEL_RANGE = 13;
 /** Motives shown floating over heads: the ones the player can do something about, and leaders. */
-const FLOATING = new Set([1, 2, 3, 4, 5, 6, 7, 9]);
+const FLOATING = new Set([1, 2, 3, 4, 5, 6, 7, 9, 11]);
 const MAX_LABELS = 14;
 
 const view = new TerrariumView($('canvas-host'));
@@ -42,6 +43,9 @@ let play: PlayView | undefined;
 let index = new Map<number, number>();
 let speed = SPEEDS[1][1];
 let selected = -1;
+/** Selected animal (tile, k) and its kind, or null. */
+let beast: { tile: number; k: number; kind: number } | null = null;
+let approachBeast = false;
 let person: PersonMsg | undefined;
 let lastPersonAsk = 0;
 let female = true;
@@ -134,6 +138,7 @@ function arrive(): void {
   me.y = play.y;
   view.player = { id: play.playerId, x: me.x, y: me.y, heading: 0, speed: 0, gesture: G_NONE };
   view.setPlayerRings(play.interactRadius, play.witnessRadius, clanColor(play.clanId));
+  view.animalTileRate = play.animalTileRate;
   view.mode = 'follow';
   view.followId = play.playerId;
   view.focusOn(me.x, me.y);
@@ -141,7 +146,8 @@ function arrive(): void {
   view.camera.updateProjectionMatrix();
   setSpeed(SPEEDS[1][1]);
   toast(`You arrive alone and make camp. You found ${play.clanLabel}.`, 'good');
-  toast('Watch the icons over people’s heads. Click someone to learn what they want.', '');
+  toast('Watch the icons over people’s heads. Click someone to learn what they want; call out 📣 and they will wait for you.', '');
+  toast('Click an animal to hunt. Start with hares 🐇; your skill grows with every hunt.', '');
   try {
     if (!localStorage.getItem('terrarium-howto')) {
       $('howto').hidden = false;
@@ -179,6 +185,11 @@ function setPlay(p: PlayView): void {
   $('stat-rank').textContent = p.rank === 1 ? `Largest of ${p.clanCount} clans` : `#${p.rank} of ${p.clanCount} · largest ${p.largest.size}`;
   $('stat-food').textContent = `🍖 ${p.carried.toFixed(0)} · camp ${p.store.toFixed(0)}`;
   $('food-fill').style.width = `${(100 * p.carried) / p.carryCapacity}%`;
+  $('stat-body').innerHTML = `${p.hunger > 0.5 ? '😫 starving' : p.hunger > 0.15 ? '😐 hungry' : '🙂 fed'} · ❤️ ${Math.round(100 * p.health)}%`;
+  $('stat-body').className = p.hunger > 0.5 || p.health < 0.5 ? 'warn-text' : '';
+  $('stat-skills').textContent = `🏹 ${Math.round(100 * p.skills.hunt)} · 🌿 ${Math.round(100 * p.skills.gather)} · 🪓 ${Math.round(100 * p.skills.wood)} · 🪵 ${p.wood.toFixed(0)}`;
+  $('btn-wood').innerHTML = `<kbd>C</kbd> Cut wood (${p.woodLeft})`;
+  ($('btn-wood') as HTMLButtonElement).disabled = p.woodLeft <= 0;
   $('btn-gather').innerHTML = `<kbd>G</kbd> Gather (${p.gathersLeft})`;
   ($('btn-gather') as HTMLButtonElement).disabled = p.gathersLeft <= 0;
   $('suspicion').innerHTML = p.suspicion
@@ -234,6 +245,8 @@ function select(id: number): void {
   selected = id;
   view.selectedId = id;
   person = undefined;
+  beast = null;
+  approachBeast = false;
   $('clanpanel').hidden = true;
   $('card').hidden = false;
   $('card-name').textContent = '…';
@@ -248,6 +261,8 @@ function startApproach(id: number): void {
 }
 
 function deselect(): void {
+  beast = null;
+  approachBeast = false;
   selected = -1;
   view.selectedId = -1;
   person = undefined;
@@ -289,13 +304,53 @@ function renderCard(): void {
     <div class="doing">Now: <b>${esc(p.doing)}</b>${p.why.length ? `<div class="why">because: ${p.why.map(esc).join(', ')}</div>` : ''}</div>
     ${p.motives.length ? `<ul class="motives">${p.motives.map((mo) => `<li>${MOTIVE_ICONS[mo.code]} ${esc(p.name.split(' ')[0])} ${esc(mo.text)}</li>`).join('')}</ul>` : '<p class="sub">Nothing troubles them right now.</p>'}
     <div class="feel ${feelCls}">${esc(p.name.split(' ')[0])} ${esc(feel.text)}.</div>
-    <div class="actions">${buttons}${invite}</div>
+    <div class="actions"><button class="wide" data-hail disabled title="Call out so they stop and wait for you">📣 Call out to ${esc(p.name.split(' ')[0])}</button>${buttons}${invite}</div>
     <div class="reach"><span class="reach-text"></span> <button data-approach hidden>Walk to them</button></div>`;
   if (html !== lastCardHtml) {
     lastCardHtml = html;
     $('card-body').innerHTML = html;
   }
   updateReach();
+}
+
+function selectBeast(spot: { tile: number; k: number; kind: number }): void {
+  deselect();
+  beast = { tile: spot.tile, k: spot.k, kind: spot.kind };
+  $('clanpanel').hidden = true;
+  $('card').hidden = false;
+  const a = ANIMALS[spot.kind];
+  $('card-name').textContent = `${a.icon} ${a.name[0].toUpperCase()}${a.name.slice(1)}`;
+  lastCardHtml = '';
+  $('card-body').innerHTML = `<div class="beast"></div>
+    <div class="actions"><button class="wide" data-hunt disabled>🏹 Hunt it</button></div>
+    <div class="reach"><span class="reach-text"></span> <button data-approach-beast hidden>Walk to it</button></div>`;
+  updateBeast();
+}
+
+function updateBeast(): void {
+  if (!beast || !play) return;
+  const a = ANIMALS[beast.kind];
+  const pos = view.animalAt(beast.tile, beast.k);
+  const body = $('card-body');
+  const info = body.querySelector('.beast');
+  if (!pos) {
+    if (info) info.innerHTML = '<p class="sub">It is gone.</p>';
+    body.querySelector<HTMLButtonElement>('button[data-hunt]')!.disabled = true;
+    body.querySelector<HTMLButtonElement>('button[data-approach-beast]')!.hidden = true;
+    return;
+  }
+  const skill = play.skills.hunt;
+  const chance = huntChance(a, skill) * (1 - 0.5 * play.hunger);
+  const danger = a.risk === 0 ? 'harmless' : a.risk < 0.1 ? 'can kick' : a.risk < 0.25 ? 'dangerous' : 'very dangerous';
+  const html = `<div class="sub">${a.food} food · ${danger} · needs hunting skill ${Math.round(100 * a.req)} (yours ${Math.round(100 * skill)})</div>
+    <div class="odds"><b>${Math.round(100 * chance)}%</b> chance to bring it down${play.hunger > 0.15 ? ' (hunger weakens you)' : ''}. ${play.huntsLeft} hunts left today.</div>`;
+  if (info && info.innerHTML !== html) info.innerHTML = html;
+  const dist = Math.hypot(pos.x - me.x, pos.y - me.y);
+  const inRange = dist <= play.huntRange - 0.4;
+  body.querySelector<HTMLButtonElement>('button[data-hunt]')!.disabled = !inRange || play.huntsLeft <= 0;
+  const txt = body.querySelector('.reach-text');
+  if (txt) txt.textContent = inRange ? 'Within reach.' : `${Math.ceil(dist)} steps away.`;
+  body.querySelector<HTMLButtonElement>('button[data-approach-beast]')!.hidden = inRange || approachBeast;
 }
 
 /** Cheap per-frame card update: distance and which buttons are usable (no re-render, so clicks land). */
@@ -306,6 +361,8 @@ function updateReach(): void {
   const inReach = dist <= play.interactRadius;
   const body = $('card-body');
   for (const b of body.querySelectorAll<HTMLButtonElement>('button[data-able]')) b.disabled = b.dataset.able !== '1' || !inReach;
+  const hailB = body.querySelector<HTMLButtonElement>('button[data-hail]');
+  if (hailB) hailB.disabled = dist > play.hailRadius || play.night;
   const txt = body.querySelector('.reach-text');
   if (txt) txt.textContent = inReach ? 'Within reach.' : `${Number.isFinite(dist) ? Math.ceil(dist) : '?'} steps away.`;
   const walk = body.querySelector<HTMLButtonElement>('button[data-approach]');
@@ -315,8 +372,17 @@ let lastCardHtml = '';
 
 $('card-body').addEventListener('click', (ev) => {
   const b = (ev.target as HTMLElement).closest('button');
+  if (b && beast) {
+    if (b.hasAttribute('data-hunt')) {
+      act({ kind: 'hunt', tile: beast.tile, k: beast.k });
+      me.gesture = G_OFFER;
+      me.gestureUntil = performance.now() + 900;
+    } else if (b.hasAttribute('data-approach-beast')) approachBeast = true;
+    return;
+  }
   if (!b || selected < 0) return;
-  if (b.dataset.verb) act({ kind: 'help', verb: b.dataset.verb as HelpVerb, target: selected });
+  if (b.hasAttribute('data-hail')) act({ kind: 'hail', target: selected });
+  else if (b.dataset.verb) act({ kind: 'help', verb: b.dataset.verb as HelpVerb, target: selected });
   else if (b.hasAttribute('data-invite')) act({ kind: 'invite', target: selected });
   else if (b.hasAttribute('data-approach')) startApproach(selected);
 });
@@ -326,11 +392,14 @@ function renderClanPanel(): void {
   if (!play) return;
   const p = play;
   const planned = p.raidPlanned >= 0 ? p.raids.find((r) => r.clan === p.raidPlanned)?.label : '';
-  $('clan-body').innerHTML = `
+  const html = `
     <p class="sub">${esc(p.clanLabel)}: ${p.members} people, ${p.adults} grown. Camp store ${p.store.toFixed(0)} food.
       ${p.caught ? `Caught ${p.caught}×. ` : ''}${p.raidsWon + p.raidsLost ? `Raids: ${p.raidsWon} won, ${p.raidsLost} lost.` : ''}</p>
     ${planned ? `<p class="feel bad">Your people raid ${esc(planned)} tonight.</p>` : ''}
-    <div class="label">Raid a camp</div>
+    <div class="label">Your camp</div>
+    <p class="sub">🛖 ${p.shelters} of ${p.maxShelters} shelters · 🪵 ${p.campWood.toFixed(0)} wood at camp (+${p.wood.toFixed(0)} in hand). Each shelter makes your camp more tempting to join.</p>
+    <button data-build ${p.campWood >= p.shelterWood && p.shelters < p.maxShelters ? '' : 'disabled'}>🛖 Build a shelter (${p.shelterWood} wood)</button>
+    <div class="label" style="margin-top:10px">Raid a camp</div>
     ${p.raids.sort((a, b) => b.odds - a.odds).map((r) => `<div class="raid-row">
       <span class="sw" style="background:${clanColor(r.clan)}"></span>
       <span>${esc(r.label)} · ${r.size} people</span>
@@ -338,10 +407,16 @@ function renderClanPanel(): void {
       ${r.ok ? '' : `<span class="why">${esc(r.reason)}</span>`}
     </div>`).join('')}
     <p class="small">A raid happens at night: win and you take much of their store; win or lose, blood is spilled, and blood is remembered.</p>`;
+  if (html !== lastClanHtml) {
+    lastClanHtml = html;
+    $('clan-body').innerHTML = html;
+  }
 }
 
+let lastClanHtml = '';
 $('clan-body').addEventListener('click', (ev) => {
   const b = (ev.target as HTMLElement).closest('button');
+  if (b?.hasAttribute('data-build')) act({ kind: 'build' });
   if (b?.dataset.raid) act({ kind: 'raid', clan: Number(b.dataset.raid) });
 });
 
@@ -385,6 +460,18 @@ function step(dt: number): void {
       dx = fx * Math.cos(az) + fz * Math.sin(az);
       dy = -fx * Math.sin(az) + fz * Math.cos(az);
       walkTo(null);
+      approachBeast = false;
+    }
+  }
+  if (!dx && !dy && approachBeast && beast && play) {
+    const pos = view.animalAt(beast.tile, beast.k);
+    if (!pos) approachBeast = false;
+    else if (Math.hypot(pos.x - me.x, pos.y - me.y) <= play.huntRange - 0.8) {
+      walkTo(null);
+      approachBeast = false;
+    } else if (performance.now() - me.approachPathAt > 700) {
+      me.approachPathAt = performance.now();
+      walkTo(pos);
     }
   }
   if (!dx && !dy && me.approach >= 0 && play) {
@@ -416,7 +503,8 @@ function step(dt: number): void {
   let moving = false;
   if (len > 0) {
     const cost = groundCost(me.x, me.y);
-    const v = (WALK / (Number.isFinite(cost) ? cost : 1)) * dt;
+    const body = play ? (1 - 0.45 * play.hunger) * (0.6 + 0.4 * play.health) : 1;
+    const v = ((WALK * body) / (Number.isFinite(cost) ? cost : 1)) * dt;
     const sx = (dx / len) * Math.min(v, me.target ? len : v);
     const sy = (dy / len) * Math.min(v, me.target ? len : v);
     // Slide along obstacles.
@@ -714,8 +802,16 @@ canvas.addEventListener('pointerup', (e) => {
     select(id);
     return;
   }
+  const spot = view.pickAnimal(e.clientX, e.clientY);
+  if (spot) {
+    selectBeast(spot);
+    return;
+  }
   const g = view.groundAt(e.clientX, e.clientY);
-  if (g) walkTo(g);
+  if (g) {
+    walkTo(g);
+    approachBeast = false;
+  }
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -730,6 +826,8 @@ window.addEventListener('keydown', (e) => {
   if (!play) return;
   if (k === 'g') act({ kind: 'gather' });
   else if (k === 'f') act({ kind: 'take', amount: 8 });
+  else if (k === 'c') act({ kind: 'wood' });
+  else if (k === 'v') act({ kind: 'deposit' });
   else if (k === 'b') goHome();
   else if (k === 'r') toggleClanPanel();
   else if (k === 'h' || k === '?') $('howto').hidden = !$('howto').hidden;
@@ -753,6 +851,8 @@ function goHome(): void {
 
 $('btn-gather').addEventListener('click', () => act({ kind: 'gather' }));
 $('btn-take').addEventListener('click', () => act({ kind: 'take', amount: 8 }));
+$('btn-wood').addEventListener('click', () => act({ kind: 'wood' }));
+$('btn-store').addEventListener('click', () => act({ kind: 'deposit' }));
 $('btn-home').addEventListener('click', goHome);
 $('btn-clan').addEventListener('click', toggleClanPanel);
 $('btn-help').addEventListener('click', () => ($('howto').hidden = false));
@@ -794,9 +894,10 @@ function loop(): void {
   view.frame();
   if (play) renderLabels();
   // Keep the reach line of an open card fresh while walking.
-  if (person && now - lastCard > 200) {
+  if ((person || beast) && now - lastCard > 200) {
     lastCard = now;
-    updateReach();
+    if (beast) updateBeast();
+    else updateReach();
   }
   requestAnimationFrame(loop);
 }
@@ -816,5 +917,8 @@ if (params.get('autostart')) {
     day: () => (day ? { clans: day.clans } : null),
     nearest: () => (play ? view.nearby(me.x, me.y, 30).filter((n) => n.id !== play!.playerId).map((n) => ({ id: n.id, dist: n.dist, sx: n.sx, sy: n.sy })) : []),
     select,
+    beasts: () => view.animalSpots().map((a) => ({ ...a, dist: Math.hypot(a.x - me.x, a.y - me.y) })).sort((a, b) => a.dist - b.dist),
+    selectBeast,
+    act,
   };
 }
