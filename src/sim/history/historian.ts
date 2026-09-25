@@ -257,7 +257,8 @@ export function describe(sim: Simulation, e: SimEvent): string {
       const killer = d.killer as number | undefined;
       const factors = (d.factors as string[]) ?? [];
       const during = factors.includes('drought') ? ' during drought' : '';
-      return `Year ${y}: ${cl(e.clans![0])}${lead} ${n(e.agents![0])} died at age ${d.age} (${d.cause}${killer !== undefined ? `, killed by ${n(killer)}` : ''}${during}).`;
+      const who = e.clans![0] < 0 ? n(e.agents![0]) : lead ? `${cl(e.clans![0])}${lead} ${n(e.agents![0])}` : `${n(e.agents![0])} of ${cl(e.clans![0])}`;
+      return `Year ${y}: ${who} died at age ${d.age} (${d.cause}${killer !== undefined ? `, killed by ${n(killer)}` : ''}${during}).`;
     }
     case 'agent.born': return `Year ${y}: ${n(e.agents![0])} was born to ${n(e.agents![1])}.`;
     case 'pair.formed': return `Year ${y}: ${n(e.agents![0])} and ${n(e.agents![1])} paired${e.clans![0] !== e.clans![1] ? ` across clans (${cl(e.clans![0])} / ${cl(e.clans![1])})` : ''}.`;
