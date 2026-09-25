@@ -36,7 +36,7 @@ import { SpatialHash } from './world/spatial';
 import { generateWorld, type World } from './world/terrain';
 
 /** Bump whenever a change alters simulation output. Part of the run identity. */
-export const CODE_VERSION = 'm6.0';
+export const CODE_VERSION = 'm6.1';
 
 export interface Grave {
   id: number;
@@ -289,6 +289,7 @@ export class Simulation {
       // Causes: the last departures and deaths of its members; where members went.
       const losses: number[] = [];
       const went = new Map<string, number>();
+      let died = 0;
       const since = this.tick - 20 * this.cfg.time.daysPerYear;
       for (const e of [...this.events.macro.values()].reverse()) {
         if (e.tick < since) break;
@@ -298,14 +299,15 @@ export class Simulation {
           const key = to < 0 ? 'living alone' : this.clans.label(to);
           went.set(key, (went.get(key) ?? 0) + 1 + ((e.data as { with?: number }).with ?? 0));
           if (losses.length < 4) losses.push(e.id);
-        } else if (e.type === 'agent.died' && losses.length < 4) {
-          losses.push(e.id);
+        } else if (e.type === 'agent.died') {
+          died++;
+          if (losses.length < 4) losses.push(e.id);
         }
       }
       const wentTo = [...went.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} (${v})`).join(', ');
       const ev = this.events.emit(this.tick, {
         type: 'clan.dissolved', causes: losses, clans: [clan.id], x: clan.campX, y: clan.campY,
-        data: { name: clan.name, wentTo },
+        data: { name: clan.name, wentTo, died },
       });
       clan.history.push(ev);
     }
@@ -545,7 +547,7 @@ export class Simulation {
     const a = sim.agents;
     a.ensureCapacity(snap.agents.count);
     a.count = snap.agents.count;
-    a.names = [...snap.agents.names];
+    a.setNames(snap.agents.names);
     a.living = [...snap.agents.living];
     const cols = a.cols as unknown as Record<string, Float64Array | Int32Array | Uint8Array>;
     for (const f of AGENT_FIELDS) {

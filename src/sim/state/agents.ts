@@ -148,6 +148,9 @@ export class AgentStore {
   capacity: number;
   /** Names are strings, so they live outside the typed columns. */
   names: string[] = [];
+  /** Display ordinals for repeated names (derived from `names`; not state). */
+  private ordinals: number[] = [];
+  private nameCounts = new Map<string, number>();
   /** Ascending ids of living agents. */
   living: number[] = [];
   cols: Columns;
@@ -205,6 +208,29 @@ export class AgentStore {
     return id;
   }
 
+  /**
+   * The name with a regnal-style ordinal when it was used before
+   * ("Zaan", later "Zaan II"): names recur via ancestor naming, and
+   * histories must still tell people apart. Derived lazily from `names`.
+   */
+  displayName(id: number): string {
+    if (id < 0 || id >= this.count) return 'someone';
+    for (let i = this.ordinals.length; i < this.count; i++) {
+      const k = (this.nameCounts.get(this.names[i]) ?? 0) + 1;
+      this.nameCounts.set(this.names[i], k);
+      this.ordinals.push(k);
+    }
+    const k = this.ordinals[id];
+    return k > 1 ? `${this.names[id]} ${roman(k)}` : this.names[id];
+  }
+
+  /** Replace all names (snapshot restore); drops the derived ordinals. */
+  setNames(names: string[]): void {
+    this.names = [...names];
+    this.ordinals = [];
+    this.nameCounts.clear();
+  }
+
   kill(id: number, tick: number): void {
     this.cols.alive[id] = 0;
     this.cols.deathTick[id] = tick;
@@ -249,3 +275,10 @@ export const CAUSE_NAMES = [
   'unknown', 'old age and illness', 'starvation', 'injury', 'epidemic', 'childbirth',
   'hunting accident', 'violence', 'accident while unattended', 'infant illness',
 ];
+
+function roman(n: number): string {
+  const t: [number, string][] = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+  let out = '';
+  for (const [v, r] of t) while (n >= v) { out += r; n -= v; }
+  return out;
+}

@@ -1,5 +1,5 @@
 {
-  "configVersion": 6,
+  "configVersion": 7,
   "time": {
     "daysPerYear": 365,
     "subStepsPerDay": 8
@@ -305,6 +305,7 @@
     "switchMargin": 0.4,
     "stayBias": 0.2,
     "affinityWeight": 1.0,
+    "valueTopTies": 6,
     "kinWeight": 2.0,
     "grudgeWeight": 1.0,
     "partnerLoyalty": 1.5,

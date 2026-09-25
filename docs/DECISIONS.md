@@ -107,6 +107,8 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-24 · Fission** (yearly per clan): requires size ≥ 30 and ≥ 0.9 × local capacity (sustainable plant yield within day-trip range ÷ need), label-propagation modularity ≥ 0.25, and a community not containing the top-status member with ≥ 6 adults, ≥ 2 fertile women, ≥ 2 men, and a focal member holding ≥ 15% of in-group regard. The group settles at the best place near water its members remember, ≥ 12 tiles away and reachable. Partners come along. The store splits by headcount. The daughter clan keeps 6 of the parent's name syllables.
 - **2026-09-24 · Clan-to-clan relation** is derived yearly (influence-weighted mean member affinity) into `sim.clanRelations`, a cache for the historian and visuals that isn't part of state.
 
+- **2026-09-25 · A clan's value counts one's closest ties, not every tie** (`clans.valueTopTies` = 6). Summing affinity over all members made a big parent clan worth more simply for being big. In the 300-year seed-2 history, 7 of 14 fission offshoots dissolved back into the parent within a year, and the parent then re-split: an artifact loop. Now only the strongest 6 positive ties in a clan count, the close circle one actually lives among. Every negative tie and grudge still counts, and kin are summed as before. After the change, no offshoot dissolved within 3 years across 4 seeds × 150 years. The loop's extra fissions also disappear: seed 2 has 3 fissions in 150 years instead of 14.
+
 ## M3 — Power and conflict
 
 - **2026-09-24 · Deference sources**, each weighted by the *observer's* legitimacy weights: contests (loser and witnesses, strength), gifts and seen deposits (generosity), lineage (monthly, deference flows to adult children of those one defers to), age/skill (monthly, toward older, more skilled acquaintances).
@@ -150,6 +152,9 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-25 · Significance** = rarity (per event type) × log₂(2 + people affected) × status (for deaths: 1 + 10 × status share, ×3 if violent). The chronicle shows the most significant events in time order.
 - **2026-09-25 · A leader who leaves a clan stops being its leader immediately** (logged). Found by the historian test: the derived label lagged membership by up to a week.
 - **2026-09-25 · Leader tenures merge reigns split by a leaderless gap of ≤ 1 year.** The derived label can still wobble around the threshold in small clans.
+
+- **2026-09-25 · People are told apart by name ordinals.** Children are often named after ancestors, so names recur. A history read "Zaan died (killed by Zaan)" and one "Thaalsenkra" died four times. `Agents.displayName` adds a regnal-style ordinal (Zaan, Zaan II, ...) in id order. It is derived from `names`, so it is not state and does not enter the hash. All user-facing text uses it: historian, inspector, CLI.
+- **2026-09-25 · Chronicle wording.** A "first" names its event, e.g. "the first killing: Laas died at age 61 (violence, killed by Gin)". A dissolution says how many members died in the clan's last 20 years besides where members went. Articles agree ("an egalitarian band").
 
 ## M7 — Experiment harness
 

@@ -86,7 +86,7 @@ function clanViews(s: Simulation): ClanView[] {
     for (const [k, v] of markers) if (v > best) [best, marker] = [v, k];
     return {
       id: cl.id, label: s.clans.label(cl.id), x: cl.campX, y: cl.campY, size: members.length, store: cl.foodStore,
-      leader: L, leaderName: L >= 0 ? s.agents.names[L] : '', leaderShare: L >= 0 ? s.statusOf(L) : 0,
+      leader: L, leaderName: L >= 0 ? s.agents.displayName(L) : '', leaderShare: L >= 0 ? s.statusOf(L) : 0,
       parent: cl.founding.parentClanId, marker,
     };
   });
@@ -119,7 +119,7 @@ function postDay(s: Simulation): void {
     attrs[o + A_FOLLOW] = c.goal[id] === 5 ? c.followId[id] : NO_ID;
     attrs[o + A_PHASE] = c.phase[id];
     attrs[o + A_FEAR] = c.fear[id];
-    names.push(s.agents.names[id]);
+    names.push(s.agents.displayName(id));
   }
   const newGraves = new Float32Array((s.graves.length - graveCount) * 2);
   for (let k = graveCount; k < s.graves.length; k++) {
@@ -185,9 +185,9 @@ function inspect(s: Simulation, id: number): InspectMsg {
   const dpy = s.cfg.time.daysPerYear;
   const age = (((c.alive[id] ? s.tick : c.deathTick[id]) - c.birthTick[id]) / dpy).toFixed(1);
   const lines = [`${c.sex[id] ? 'male' : 'female'}, age ${age} · ${s.clans.label(c.clanId[id])}`];
-  const out: InspectMsg = { ...empty, name: s.agents.names[id], alive: c.alive[id] === 1, lines };
+  const out: InspectMsg = { ...empty, name: s.agents.displayName(id), alive: c.alive[id] === 1, lines };
   const fam = (role: string, x: number) => {
-    if (x !== NO_ID && x >= 0) out.family.push({ role, id: x, name: s.agents.names[x], alive: c.alive[x] === 1 });
+    if (x !== NO_ID && x >= 0) out.family.push({ role, id: x, name: s.agents.displayName(x), alive: c.alive[x] === 1 });
   };
   const m = c.motherId[id];
   const f = c.fatherId[id];
@@ -198,7 +198,7 @@ function inspect(s: Simulation, id: number): InspectMsg {
   fam('partner', c.partnerId[id]);
   for (const k of s.pedigree.childrenOf(id)) fam('child', k);
   if (!c.alive[id]) {
-    lines.push(`died: ${CAUSE_NAMES[c.deathCause[id]]}${c.killerId[id] !== NO_ID ? ` (killed by ${s.agents.names[c.killerId[id]]})` : ''}`);
+    lines.push(`died: ${CAUSE_NAMES[c.deathCause[id]]}${c.killerId[id] !== NO_ID ? ` (killed by ${s.agents.displayName(c.killerId[id])})` : ''}`);
     return out;
   }
   const slot = c.slot[id];
@@ -217,7 +217,7 @@ function inspect(s: Simulation, id: number): InspectMsg {
     if (!c.alive[o]) return;
     const label = o === p ? 'partner' : v.grudge > 0.4 || v.aff < -0.4 ? 'enemy' : v.grudge > 0.15 ? 'rival'
       : v.def > 0.25 ? 'respected' : v.aff > 0.5 ? 'friend' : 'acquaintance';
-    out.relations.push({ id: o, name: s.agents.names[o], label, aff: v.aff, def: v.def, grudge: v.grudge, clan: c.clanId[o] });
+    out.relations.push({ id: o, name: s.agents.displayName(o), label, aff: v.aff, def: v.def, grudge: v.grudge, clan: c.clanId[o] });
   });
   out.relations.sort((a, b) => Math.abs(b.aff) + b.def + b.grudge - (Math.abs(a.aff) + a.def + a.grudge));
   const mm = s.mind;
@@ -227,7 +227,7 @@ function inspect(s: Simulation, id: number): InspectMsg {
     const obj = mm.memObject[i];
     const yr = Math.floor(mm.memTick[i] / dpy);
     const src = mm.memHops[i] === 0 ? 'saw' : `heard (${mm.memHops[i]} hops)`;
-    out.memories.push(`${src}: ${s.agents.names[subj] ?? '?'} — ${MEM_NAMES[mm.memType[i]]}${obj >= 0 ? ` (${s.agents.names[obj]})` : ''}, year ${yr}`);
+    out.memories.push(`${src}: ${s.agents.displayName(subj)} — ${MEM_NAMES[mm.memType[i]]}${obj >= 0 ? ` (${s.agents.displayName(obj)})` : ''}, year ${yr}`);
   }
   return out;
 }
@@ -241,7 +241,7 @@ function inspectClan(s: Simulation, id: number): ClanInspectMsg {
   const L = s.leaders.get(id);
   out.lines.push(s.clans.label(id));
   out.lines.push(`${members.length} people · store ${clan.foodStore.toFixed(0)} · founded year ${Math.floor(clan.founding.tick / s.cfg.time.daysPerYear)}${clan.founding.parentClanId > 0 ? ` from ${s.clans.label(clan.founding.parentClanId)}` : ''}`);
-  out.lines.push(L !== undefined ? `leader: ${s.agents.names[L]} (${(100 * s.statusOf(L)).toFixed(0)}% of deference)` : 'no leader (distributed)');
+  out.lines.push(L !== undefined ? `leader: ${s.agents.displayName(L)} (${(100 * s.statusOf(L)).toFixed(0)}% of deference)` : 'no leader (distributed)');
   const mean = (f: keyof typeof c) => members.reduce((a, m) => a + (c[f] as Float64Array)[m], 0) / Math.max(1, members.length);
   out.culture = [
     { name: 'sharing norm', value: mean('cSharing') }, { name: 'violence tolerance', value: mean('cViolence') },

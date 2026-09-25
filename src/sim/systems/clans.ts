@@ -22,19 +22,27 @@ import { nearestCampSite } from './camps';
 
 export const LONER = NO_ID;
 
+const tieScratch: number[] = [];
+
 /** Value of belonging to clan `k` for agent `i`, from i's own knowledge. */
 export function clanValue(sim: Simulation, i: number, k: number): number {
   const c = sim.agents.cols;
   const cc = sim.cfg.clans;
   const members = sim.clanMembers.get(k) ?? [];
-  let aff = 0;
+  // Affinity counts only i's strongest ties there (its close circle), so a
+  // big clan is not worth more merely for being big; grudges all count.
   let grudge = 0;
   const slot = c.slot[i];
+  const ties = tieScratch;
+  ties.length = 0;
   sim.rel.forEach(slot, sim.tick, (other, v) => {
     if (!c.alive[other] || c.clanId[other] !== k || other === i) return;
-    aff += v.aff;
+    ties.push(v.aff);
     grudge += v.grudge;
   });
+  ties.sort((a, b) => b - a);
+  let aff = 0;
+  for (let x = 0; x < ties.length; x++) if (x < cc.valueTopTies || ties[x] < 0) aff += ties[x];
   let kin = 0;
   const kinIds = sim.kin.kinOf(i);
   const rs = sim.kin.rOf(i);

@@ -39,7 +39,7 @@ for (const clan of [...sim.clans.clans.values()].filter((c) => c.dissolvedTick >
 lines.push('## How did leaders gain power?', '');
 const tenures = sim.leaderTenures().sort((a, b) => b.years - a.years).slice(0, 6);
 for (const t of tenures) {
-  lines.push(`### ${sim.agents.names[t.leader]} of ${sim.clans.label(t.clan)} (${t.years.toFixed(1)} years)`, '', chain(howGainedPower(sim, t.leader)), '');
+  lines.push(`### ${sim.agents.displayName(t.leader)} of ${sim.clans.label(t.clan)} (${t.years.toFixed(1)} years)`, '', chain(howGainedPower(sim, t.leader)), '');
 }
 
 lines.push('## Chronicle', '', ...chronicle(sim, { limit: 150 }).map((l) => `- ${l}`), '');

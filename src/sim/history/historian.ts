@@ -238,14 +238,19 @@ export function significance(sim: Simulation, e: SimEvent): number {
 
 export function describe(sim: Simulation, e: SimEvent): string {
   const y = Math.floor(e.tick / sim.cfg.time.daysPerYear);
-  const n = (id: number | undefined) => (id !== undefined && id >= 0 ? sim.agents.names[id] : 'someone');
+  const n = (id: number | undefined) => (id !== undefined && id >= 0 ? sim.agents.displayName(id) : 'someone');
   const cl = (id: number | undefined) => (id !== undefined ? sim.clans.label(id) : 'a clan');
   const d = (e.data ?? {}) as Record<string, unknown>;
   switch (e.type) {
     case 'sim.start': return `Year ${y}: the world began (seed ${d.seed}).`;
     case 'clan.founded': return d.initial ? `Year ${y}: ${cl(e.clans![0])} is among the first clans.` : `Year ${y}: ${n(e.agents?.[0])} led a group out of ${cl(e.clans![1])} and founded ${cl(e.clans![0])}.`;
     case 'clan.fission': return `Year ${y}: ${cl(e.clans![0])} split (${d.size} adults left; community structure ${d.modularity}).`;
-    case 'clan.dissolved': return `Year ${y}: ${cl(e.clans![0])} dissolved${d.wentTo ? ` (members went to ${d.wentTo})` : ''}.`;
+    case 'clan.dissolved': {
+      // wentTo and died cover the clan's last 20 years.
+      const parts = [d.wentTo ? `members went to ${d.wentTo}` : '', d.died ? `${d.died} died` : ''].filter(Boolean);
+      const why = d.wentTo ? parts.join('; ') : d.died ? `its last members died; ${d.died} deaths in its final years` : '';
+      return `Year ${y}: ${cl(e.clans![0])} dissolved${why ? ` (${why})` : ''}.`;
+    }
     case 'clan.camp_moved': return `Year ${y}: ${cl(e.clans![0])} moved camp (foraging returns had fallen to ${d.meanYield}).`;
     case 'agent.died': {
       const lead = sim.leaderAt(e.clans![0], e.tick) === e.agents![0] ? "'s leader" : '';
@@ -276,9 +281,12 @@ export function describe(sim: Simulation, e: SimEvent): string {
     case 'history.blood_feud': return `Year ${y}: a blood feud tore through ${cl(e.clans![0])} (${d.killings} killings).`;
     case 'history.feud_ended': return `Year ${y}: the feud ${e.clans!.length > 1 ? `between ${cl(e.clans![0])} and ${cl(e.clans![1])}` : `in ${cl(e.clans![0])}`} died down.`;
     case 'history.famine': return `Year ${y}: famine — ${d.starved} starved.`;
-    case 'history.regime': return `Year ${y}: ${cl(e.clans![0])} became a ${d.regime}${d.previous ? ` (was ${d.previous})` : ''}.`;
+    case 'history.regime': return `Year ${y}: ${cl(e.clans![0])} became ${article(String(d.regime))} ${d.regime}${d.previous ? ` (was ${d.previous})` : ''}.`;
     case 'history.overtake': return `Year ${y}: ${cl(e.clans![0])} overtook ${cl(e.clans![1])} as the largest clan (${d.size}).`;
-    case 'history.first': return `Year ${y}: the ${d.what}.`;
+    case 'history.first': {
+      const cause = e.causes.length ? sim.events.get(e.causes[0]) : undefined;
+      return `Year ${y}: the ${d.what}${cause ? `: ${describe(sim, cause).replace(/^Year \d+: /, '').replace(/\.$/, '')}` : ''}.`;
+    }
     default: return `Year ${y}: ${e.type}.`;
   }
 }
@@ -342,4 +350,8 @@ export function howGainedPower(sim: Simulation, leaderId: number): WhyStep[] {
     if (e.type === 'leader.changed' && (e.data as { leader: number }).leader === leaderId) return whyQuery(sim, e.id, 4);
   }
   return [];
+}
+
+function article(word: string): string {
+  return /^[aeiou]/i.test(word) ? 'an' : 'a';
 }
