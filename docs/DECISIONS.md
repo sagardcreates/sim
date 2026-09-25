@@ -131,6 +131,8 @@ Movement alone costs ~190 ns per agent-substep, with 8 substeps per day. Once re
 - **2026-09-24 · Divergence metrics (yearly).** Functional: the share of trait variance lying between clans, averaged over 9 continuous traits (an F_ST analogue). Marker: 1 − mean pairwise overlap of clan marker distributions.
 - **2026-09-24 · Events carry the markers of the agents involved** (`markers`), for the V1.5 association-learning module (§10). "Nearby markers" is approximated by participants' markers; scanning the area around every event would be expensive.
 
+- **2026-09-25 · Caveat on the M4 divergence result.** Clans start with distinct cultures (`init.cultureClanSd` 0.18), so between-clan functional F_ST is high from year 0 (about 0.9 to 0.97). The acceptance criterion ("measurable divergence at year 300": 19/20 PASS) mostly shows that differences are maintained, not created. Learning keeps them higher than the knockout: end F_ST is 0.934 with learning and 0.825 without. Marker divergence ends at 0.757 versus 0.694. The effect is modest. To test whether divergence *emerges*, start with `cultureClanSd: 0` (experiment 04 supports this override).
+
 ## M5 — The terrarium
 
 - **2026-09-25 · Architecture.** The sim runs in a Web Worker (with a main-thread fallback if workers are blocked). Each simulated day the worker posts every living agent's position at all 8 sub-steps, per-agent render attributes, the day's notable events, new graves, abandoned camps, clan views and yearly stats. Buffers are transferred, not copied. The UI only sends requests (speed, inspect, scrub).

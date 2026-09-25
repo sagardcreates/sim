@@ -4,6 +4,44 @@ Demography must be stable before any emergent result counts (§0.8). `npm run ca
 
 Tools: `npm run calibrate`, `npm run sweep` (population trajectory for one config), `npm run compare` (several config variants × seeds).
 
+## Final result (code m6.1, config v7, 20 seeds × 300 years, full model)
+
+This run has every system on: sharing, hunting parties, conflict, leadership, culture and gossip. It comes from `npm run accept -- --milestone all --seeds 1..20 --years 300`. Full report: [`acceptance-report.md`](acceptance-report.md).
+
+| target | value | status |
+|---|---|---|
+| population neither extinct nor > 4× start in ≥ 80% of seeds | 20/20 (end 74–642; minimum 69, peak 642) | PASS |
+| total fertility 4–6 births per woman (completed fertility) | mean 4.59 (range 4.15–5.48) | PASS |
+| 40–60% of births survive to 15 | mean 54.5% (range 52–56%) | PASS |
+| modal adult age at death 60–75 (pooled) | 62 (per-seed 54–66; 13/20 seeds within 60–75) | PASS |
+| mean interbirth interval 3–4 years (pooled) | 4.27 (per-seed 3.80–4.52) | FAIL (marginal) |
+
+Deaths by cause, pooled:
+
+| cause | share of deaths |
+|---|---|
+| old age and illness | 43.6% |
+| infant illness | 40.7% |
+| hunting accident | 6.8% |
+| epidemic | 5.2% |
+| violence | 2.1% |
+| starvation | 0.9% |
+| childbirth | 0.6% |
+
+Mean life expectancy at birth is 29 years.
+
+**What changed since M1.** Sharing (kin, partner, friends, camp store) and group hunting changed food flow, so demography was retuned after M2/M3:
+
+| parameter | M1 value | final value | why |
+|---|---|---|---|
+| forage rate | 0.8 | 0.65 | Sharing made food more reliable. Without the cut, populations grew past 4×. |
+| infant mortality a1 | 0.18 | 0.45 | Survival to 15 had drifted up once sharing buffered children. |
+| infant mortality b1 | — | 0.9 | Same reason. |
+
+Starvation fell from 43% of deaths to under 1%: food sharing, not famine, now smooths scarcity. Population regulation runs mostly through infant illness and fertility suppression by body condition. That fixes M1 open issue 2.
+
+**Remaining issue:** the interbirth interval is 4.27 years, about 0.3 above the upper target. As at M1, the levers that shorten it raise fertility and destabilise population size. Variant C (forage 0.8) gave an interval of 4.05, but populations more than tripled. The deviation is accepted and flagged; it does not affect the emergent results, which depend on stable populations.
+
 ## M1 result (code m1.0, 20 seeds × 300 years)
 
 Full report: [`calibration-m1-report.md`](calibration-m1-report.md).

@@ -42,7 +42,7 @@ writeFileSync(join(out, 'report.md'), report);
 writeFileSync(join(out, 'results.json'), JSON.stringify(rs.map((r) => ({ seed: r.job.seed, demography: r.demography, extra: r.extra })), null, 2));
 console.log(report);
 
-function sections(m: string, results: RunResult[], knockout: RunResult[] = []): string[] {
+function sections(m: string, results: RunResult[], knockout: RunResult[] = [], demography = true): string[] {
   const n = results.length;
   const most = Math.ceil(n / 2);
   const pass = (ok: boolean) => (ok ? 'PASS' : 'FAIL');
@@ -61,7 +61,8 @@ function sections(m: string, results: RunResult[], knockout: RunResult[] = []): 
     );
   }
   if (m === 'all') {
-    lines.push('## M2', '', ...sections('m2', results), '', '## M3', '', ...sections('m3', results), '', '## M4', '', ...sections('m4', results, knockout));
+    lines.push('## M2', '', ...sections('m2', results, [], false), '', '## M3', '', ...sections('m3', results, [], false), '', '## M4', '', ...sections('m4', results, knockout, false));
+    lines.push(...demographyTable(results));
     return lines;
   }
   if (m === 'm4') {
@@ -106,10 +107,12 @@ function sections(m: string, results: RunResult[], knockout: RunResult[] = []): 
       ...results.map((r) => `| ${r.job.seed} | ${(100 * r.demography.violentDeathShare).toFixed(1)} | ${r.extra.threats} | ${r.extra.attacks} | ${r.extra.killings} | ${r.extra.tenures} | ${r.extra.tenureMean.toFixed(1)} / ${r.extra.tenureMedian.toFixed(1)} / ${r.extra.tenureMax.toFixed(1)} | ${(100 * r.extra.leaderYearsShare).toFixed(0)}% |`),
     );
   }
-  if (m === 'm2' && results.length && results[0].job.label !== undefined) {
-    // (demography appended below)
-  }
-  lines.push('', '## Demography', '', '| seed | pop start→end | completed fertility | survival to 15 | modal adult age | interbirth |', '|---|---|---|---|---|---|');
+  if (demography) lines.push(...demographyTable(results));
+  return lines;
+}
+
+function demographyTable(results: RunResult[]): string[] {
+  const lines = ['', '## Demography', '', '| seed | pop start→end | completed fertility | survival to 15 | modal adult age | interbirth |', '|---|---|---|---|---|---|'];
   for (const r of results) {
     const d = r.demography;
     lines.push(`| ${d.seed} | ${d.initialPopulation}→${d.finalPopulation} | ${d.completedFertility.toFixed(2)} | ${d.survivalTo15.toFixed(2)} | ${d.modalAdultAgeAtDeath} | ${d.meanInterbirthYears.toFixed(2)} |`);
